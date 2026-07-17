@@ -195,6 +195,8 @@ tools/                  Una clase por herramienta (tool_id, mouse_press/move/
   numpy_utils.py        Utilidades numpy compartidas: kernels de pincel, flood
                         fill por tolerancia, path_from_mask (máscara booleana ->
                         QPainterPath de selección, con fusión de rectángulos).
+  roi_buffers.py        Coberturas e imagen premultiplicada `float32` dispersas
+                        por teselas, más lectura/escritura y selección por ROI.
   draw_tools.py         PenTool, EraserTool, PencilTool, ReplaceColorTool.
   bucket_tool.py        BucketTool (relleno).
   eyedropper_tool.py    EyedropperTool (cuentagotas).
@@ -466,6 +468,13 @@ diera problemas, el usuario puede forzar el backend a mano con
   reducida por lienzo, compartida con su tooltip. Tras regenerarla llama a
   `confirmar_miniatura_actualizada()`. Cualquier propiedad nueva que altere el
   compuesto debe formar parte de `_huella_visual()`.
+- **Herramientas locales y memoria:** Dedo, Licuar, Esponja y Sobre/Subexponer
+  nunca deben convertir la capa completa a NumPy al empezar un trazo. Usa
+  `ImagenPremultiplicadaDispersa`, `CoberturaDispersa` y los helpers de ROI de
+  `tools/roi_buffers.py`; Pincel, Aerógrafo, Clonado y Sustituir color también
+  acumulan su cobertura con esa clase. Las teselas se crean solo al tocarlas y
+  deben liberarse al terminar. Conserva siempre selección, bloqueo alfa,
+  precisión premultiplicada durante el trazo, preview y un único paso de undo.
 - **Deshacer/rehacer:** `QUndoStack` en el canvas; los comandos de píxeles viven
   en `tools/commands.py` y los de capas/imagen completa en
   `models/layer_commands.py`. Las acciones de menú se habilitan/deshabilitan por

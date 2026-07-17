@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, QPoint, QLineF
 from tools.draw_tools import PenTool
 from tools.numpy_utils import SHAPES, get_kernel, qimage_to_bgra, bgra_to_qimage
 from tools.commands import PaintCommand
+from tools.roi_buffers import CoberturaDispersa
 
 
 class CloneTool(PenTool):
@@ -15,7 +16,7 @@ class CloneTool(PenTool):
       1. Ctrl + clic izquierdo  → fija el punto de ORIGEN.
       2. Clic izquierdo y arrastra → clona desde el origen al destino.
 
-    El trazo acumula su cobertura (máximo por estampa, con la forma y dureza del
+    El trazo acumula por teselas su cobertura (máximo por estampa, con forma y dureza del
     pincel) y se compone UNA sola vez copiando los píxeles del origen desplazado:
     así no hay costuras ni dobles bordes en los solapes (a diferencia del estampado
     repetido). Muestrea la foto de la capa (o de todas, según opción) tomada al
@@ -118,7 +119,8 @@ class CloneTool(PenTool):
             self._src_img = self.canvas.render_flat_image(Qt.transparent)
         else:
             self._src_img = self._before
-        self._coverage = np.zeros((self._before.height(), self._before.width()), dtype=np.float32)
+        self._coverage = CoberturaDispersa(
+            self._before.width(), self._before.height())
         self._kernel_cache = {}
         self.distance_carried = 0.0
         self._stroking = True
@@ -155,15 +157,14 @@ class CloneTool(PenTool):
         kernel = get_kernel(radius, hardness, shape)
         R = (kernel.shape[0] - 1) // 2
         px, py = point.x(), point.y()
-        H, W = self._coverage.shape
+        H, W = self._coverage.alto, self._coverage.ancho
         x0, y0 = px - R, py - R
         cx0, cy0 = max(0, x0), max(0, y0)
         cx1, cy1 = min(W, px + R + 1), min(H, py + R + 1)
         if cx1 <= cx0 or cy1 <= cy0:
             return None
         ksub = kernel[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
-        reg = self._coverage[cy0:cy1, cx0:cx1]
-        np.maximum(reg, ksub, out=reg)
+        self._coverage.maximo(cx0, cy0, ksub)
         return (cx0, cy0, cx1, cy1)
 
     def _recompose(self, x0, y0, x1, y1):
@@ -188,7 +189,7 @@ class CloneTool(PenTool):
             dx, dy = vx0 - sx0, vy0 - sy0
             src[dy:dy + (vy1 - vy0), dx:dx + (vx1 - vx0), :] = sub
 
-        cov = self._coverage[y0:y1, x0:x1]
+        cov = self._coverage.region(x0, y0, x1, y1)
         src_a = src[..., 3] / 255.0
         sa = cov * src_a                 # alfa efectivo del clon (cobertura × alfa origen)
         oa = o[..., 3] / 255.0

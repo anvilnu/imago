@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from tools.base_tool import BaseTool
 from tools.commands import PaintCommand
+from tools.roi_buffers import (CoberturaDispersa, escribir_rgba_region,
+                               imagen_rgba_region, mascara_seleccion_region)
 
 
 class SpongeTool(BaseTool):
@@ -27,19 +29,14 @@ class SpongeTool(BaseTool):
         self.tool_id = "sponge"
         self._active = False
         self._before = None
-        self._orig = None         # float32 (H,W,3) RGB 0..1 del inicio del trazo
-        self._alpha = None        # uint8 (H,W) alfa original (no se toca)
-        self._acc = None          # float32 (H,W) máscara de trazo acumulada 0..1
-        self._out = None          # uint8 (H,W,4) buffer de salida
+        self._coverage = None     # cobertura float32 por teselas tocadas
         self._mask = None         # punta del pincel (D,D) 0..1
-        self._clip = None         # máscara booleana de la selección (o None)
         self._D = 0
         self._W = self._H = 0
         self._last = None
         self._mode = "desaturate"
         self._flow = 0.5
         self._orig_fmt = None
-        self._outbuf = None
         self._work = None         # QImage de trabajo del trazo (parches in place)
         self._dirty = None        # bbox (x0, y0, x1, y1) pendiente de volcar
 
@@ -52,20 +49,15 @@ class SpongeTool(BaseTool):
             return
         self._orig_fmt = img.format()
         self._before = QImage(img)
-        u8 = self._qimage_to_array(img)
-        self._H, self._W = u8.shape[0], u8.shape[1]
-        self._orig = u8[..., :3].astype(np.float32) / 255.0
-        self._alpha = u8[..., 3].copy()
-        self._out = u8
-        self._acc = np.zeros((self._H, self._W), np.float32)
+        self._H, self._W = img.height(), img.width()
+        self._coverage = CoberturaDispersa(self._W, self._H)
         # 🚀 Imagen de TRABAJO del trazo: se asigna UNA vez y durante el trazo
         # solo se le pintan los PARCHES modificados (in place, como el pincel):
         # el coste por movimiento va con el tamaño del pincel, no de la imagen.
-        self._work = self._array_to_qimage(u8)
+        self._work = img.convertToFormat(QImage.Format_RGBA8888)
         self.canvas.layers[self.canvas.active_layer_index].image = self._work
         self._dirty = None
         self._build_mask()
-        self._build_clip_mask()
 
         self._mode = getattr(self.canvas, 'sponge_mode', 'desaturate')
         # Ctrl al empezar el trazo: modo contrario temporal
@@ -121,22 +113,6 @@ class SpongeTool(BaseTool):
         m[d > 1.0] = 0.0
         self._mask = m.astype(np.float32)
 
-    def _build_clip_mask(self):
-        self._clip = None
-        sel = getattr(self.canvas, 'selection', None)
-        if sel is None or sel.isEmpty():
-            return
-        m = QImage(self._W, self._H, QImage.Format_Grayscale8)
-        m.fill(0)
-        from PySide6.QtGui import QPainter, QColor
-        p = QPainter(m)
-        p.setClipPath(sel)
-        p.fillRect(0, 0, self._W, self._H, QColor(255, 255, 255))
-        p.end()
-        bpl = m.bytesPerLine()
-        buf = np.frombuffer(m.constBits(), np.uint8).reshape(self._H, bpl)
-        self._clip = (buf[:, :self._W] > 127)
-
     # --------------------------------------------------------- estampado
     def _region(self, cx, cy):
         D = self._D
@@ -154,18 +130,22 @@ class SpongeTool(BaseTool):
             return
         bx0, by0, bx1, by1, mx0, my0, mx1, my1 = reg
         ms = self._mask[my0:my1, mx0:mx1]
-        if self._clip is not None:
-            ms = ms * self._clip[by0:by1, bx0:bx1]
-        acc = self._acc[by0:by1, bx0:bx1]
-        np.maximum(acc, ms, out=acc)   # máximo: sin acumular dentro del trazo
-        self._recompute(bx0, by0, bx1, by1)
+        clip = mascara_seleccion_region(
+            self.canvas, bx0, by0, bx1, by1)
+        if clip is not None:
+            ms = ms * clip
+        self._coverage.maximo(bx0, by0, ms)
+        self._marcar_sucio(bx0, by0, bx1, by1)
 
     def _recompute(self, bx0, by0, bx1, by1):
         """Recalcula la región desde el ORIGINAL con la máscara acumulada: el
         efecto de un trazo es uniforme aunque se repase la misma zona."""
-        v = self._orig[by0:by1, bx0:bx1]                       # (h,w,3) 0..1
-        s = self._acc[by0:by1, bx0:bx1] * self._flow           # fuerza 0..1
-        s = s * (self._alpha[by0:by1, bx0:bx1] > 0)            # solo píxeles con alfa
+        original = imagen_rgba_region(
+            self._before, bx0, by0, bx1, by1)
+        v = original[..., :3].astype(np.float32) / 255.0
+        s = self._coverage.region(
+            bx0, by0, bx1, by1) * self._flow                   # fuerza 0..1
+        s = s * (original[..., 3] > 0)                          # solo píxeles con alfa
         s = s[..., None]
         # Gris de LUMINOSIDAD del píxel (no la media): desaturar conserva el
         # brillo percibido, como la esponja de otros editores.
@@ -174,8 +154,9 @@ class SpongeTool(BaseTool):
             out = v + s * (gris - v)             # interpola hacia el gris
         else:
             out = gris + (v - gris) * (1.0 + s)  # aleja el color del gris
-        self._out[by0:by1, bx0:bx1, :3] = np.clip(out * 255.0 + 0.5, 0, 255).astype(np.uint8)
-        self._marcar_sucio(bx0, by0, bx1, by1)
+        original[..., :3] = np.clip(
+            out * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        escribir_rgba_region(self._work, bx0, by0, original)
 
     # --------------------------------------------------------- volcado
     def _marcar_sucio(self, x0, y0, x1, y1):
@@ -195,14 +176,7 @@ class SpongeTool(BaseTool):
             return
         x0, y0, x1, y1 = self._dirty
         self._dirty = None
-        sub = np.ascontiguousarray(self._out[y0:y1, x0:x1])
-        patch = QImage(sub.data, x1 - x0, y1 - y0, 4 * (x1 - x0),
-                       QImage.Format_RGBA8888)
-        from PySide6.QtGui import QPainter
-        p = QPainter(self._work)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        p.drawImage(x0, y0, patch)
-        p.end()
+        self._recompute(x0, y0, x1, y1)
         self.canvas.update()
 
     def _commit(self):
@@ -218,21 +192,6 @@ class SpongeTool(BaseTool):
             self.canvas.undo_stack.push(PaintCommand(
                 self.canvas, self.canvas.active_layer_index,
                 self._before, after, texto, tool_id="sponge", confine=True))
-        self._before = self._orig = self._alpha = self._acc = None
-        self._out = self._mask = self._clip = self._outbuf = None
+        self._before = self._coverage = self._mask = None
         self._work = None
         self._dirty = None
-
-    # --------------------------------------------------------- QImage<->numpy
-    def _qimage_to_array(self, qimg):
-        qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
-        W, H = qimg.width(), qimg.height()
-        bpl = qimg.bytesPerLine()
-        buf = np.frombuffer(qimg.constBits(), np.uint8).reshape(H, bpl)
-        return buf[:, :W * 4].reshape(H, W, 4).copy()
-
-    def _array_to_qimage(self, arr):
-        self._outbuf = np.ascontiguousarray(arr)
-        qimg = QImage(self._outbuf.data, self._W, self._H, 4 * self._W,
-                      QImage.Format_RGBA8888)
-        return qimg.copy()

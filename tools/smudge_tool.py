@@ -6,6 +6,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from tools.base_tool import BaseTool
 from tools.commands import PaintCommand
+from tools.roi_buffers import (ImagenPremultiplicadaDispersa,
+                               escribir_rgba_region, imagen_rgba_region,
+                               mascara_seleccion_region)
 
 
 class SmudgeTool(BaseTool):
@@ -18,7 +21,7 @@ class SmudgeTool(BaseTool):
     - Espaciado: separación entre estampados del trazo (menor = más suave).
     - Pintar con color: el trazo arranca con el color primario (finger painting).
     - La mezcla se hace en alfa PREMULTIPLICADO (bordes transparentes correctos)
-      y todo el trazo se procesa en float32 (sin conversiones por paso).
+      y solo el parche bajo el pincel se procesa en float32.
     - Respeta la selección activa. Vista previa en vivo y un paso de deshacer.
     """
 
@@ -27,10 +30,9 @@ class SmudgeTool(BaseTool):
         self.tool_id = "smudge"
         self._active = False
         self._before = None
-        self._buf = None          # float32 (H,W,4) PREMULTIPLICADO
+        self._buf = None          # float32 premultiplicado por teselas tocadas
         self._carry = None        # float32 (D,D,4) premultiplicado
         self._mask = None
-        self._clip = None
         self._D = 0
         self._W = self._H = 0
         self._last = None
@@ -39,11 +41,9 @@ class SmudgeTool(BaseTool):
         self._finger = False
         self._primary = None      # color primario premultiplicado (4,)
         self._orig_fmt = None
-        self._outbuf = None
         self._lock = False        # bloqueo de transparencia del trazo en curso
-        self._alpha0 = None       # alfa original (solo si _lock)
         self._work = None         # QImage de trabajo del trazo (parches in place)
-        self._dirty = None        # bbox (x0, y0, x1, y1) pendiente de volcar
+        self._dirty = False       # hubo cambios pendientes de repintar
 
     # ------------------------------------------------------------- ratón
     def mouse_press(self, event):
@@ -54,21 +54,19 @@ class SmudgeTool(BaseTool):
             return
         self._orig_fmt = img.format()
         self._before = QImage(img)
-        u8 = self._qimage_to_array(img)
         # 🔒 Bloqueo de transparencia: el dedo arrastra solo el COLOR y el alfa
-        # original se restaura en cada volcado (aquí no hay painter cuyo modo
-        # ajustar: se escribe la imagen entera).
+        # original se restaura en cada parche (aquí no hay painter cuyo modo
+        # ajustar, porque el cálculo se hace en NumPy).
         self._lock = self.canvas.alpha_lock_active()
-        self._alpha0 = u8[..., 3].copy() if self._lock else None
-        self._buf = self._premultiply(u8)
-        self._H, self._W = self._buf.shape[0], self._buf.shape[1]
+        self._H, self._W = img.height(), img.width()
         # 🚀 Imagen de TRABAJO del trazo: se asigna UNA vez y durante el trazo
         # solo se le pintan los PARCHES modificados (in place, como el pincel).
         # Antes cada movimiento des-premultiplicaba y copiaba la imagen ENTERA
         # (~1 s por evento en 4000×5000); ahora el coste va con el pincel.
-        self._work = self._array_to_qimage(u8)
+        self._work = img.convertToFormat(QImage.Format_RGBA8888)
+        self._buf = ImagenPremultiplicadaDispersa(img)
         self.canvas.layers[self.canvas.active_layer_index].image = self._work
-        self._dirty = None
+        self._dirty = False
         self._build_mask()
         self._strength = max(0.0, min(0.99,
                             getattr(self.canvas, 'smudge_strength', 50) / 100.0))
@@ -76,7 +74,6 @@ class SmudgeTool(BaseTool):
                             getattr(self.canvas, 'smudge_spacing', 12) / 100.0))
         self._finger = bool(getattr(self.canvas, 'smudge_finger_paint', False))
         self._primary = self._primary_premult()
-        self._build_clip_mask()
         pos = event.position() / self.canvas.zoom_factor
         self._last = (pos.x(), pos.y())
         self._init_carry(pos.x(), pos.y())
@@ -145,22 +142,6 @@ class SmudgeTool(BaseTool):
         m[d > 1.0] = 0.0
         self._mask = m.astype(np.float32)
 
-    def _build_clip_mask(self):
-        self._clip = None
-        sel = getattr(self.canvas, 'selection', None)
-        if sel is None or sel.isEmpty():
-            return
-        m = QImage(self._W, self._H, QImage.Format_Grayscale8)
-        m.fill(0)
-        from PySide6.QtGui import QPainter, QColor
-        p = QPainter(m)
-        p.setClipPath(sel)
-        p.fillRect(0, 0, self._W, self._H, QColor(255, 255, 255))
-        p.end()
-        bpl = m.bytesPerLine()
-        buf = np.frombuffer(m.constBits(), np.uint8).reshape(self._H, bpl)
-        self._clip = (buf[:, :self._W] > 127)
-
     # --------------------------------------------------------- emborronar
     def _region(self, cx, cy):
         D = self._D
@@ -181,52 +162,40 @@ class SmudgeTool(BaseTool):
             reg = self._region(cx, cy)
             if reg:
                 bx0, by0, bx1, by1, mx0, my0, mx1, my1 = reg
-                self._carry[my0:my1, mx0:mx1] = self._buf[by0:by1, bx0:bx1]
+                self._carry[my0:my1, mx0:mx1] = self._buf.region(
+                    bx0, by0, bx1, by1)
 
     def _smudge_at(self, cx, cy):
         reg = self._region(cx, cy)
         if not reg:
             return
         bx0, by0, bx1, by1, mx0, my0, mx1, my1 = reg
-        under = self._buf[by0:by1, bx0:bx1]            # float32 premult
+        under = self._buf.region(bx0, by0, bx1, by1)
         carry_sub = self._carry[my0:my1, mx0:mx1]
         ms = self._mask[my0:my1, mx0:mx1]
-        if self._clip is not None:
-            ms = ms * self._clip[by0:by1, bx0:bx1]
+        clip = mascara_seleccion_region(
+            self.canvas, bx0, by0, bx1, by1)
+        if clip is not None:
+            ms = ms * clip
         m = (ms * self._strength)[..., None]
-        self._buf[by0:by1, bx0:bx1] = under * (1 - m) + carry_sub * m
+        salida = under * (1 - m) + carry_sub * m
+        self._buf.escribir_region(bx0, by0, salida)
         # la pintura arrastrada evoluciona hacia el color nuevo
         self._carry[my0:my1, mx0:mx1] = under * (1 - self._strength) + carry_sub * self._strength
-        self._marcar_sucio(bx0, by0, bx1, by1)
+        sub = self._unpremultiply(salida)
+        if self._lock:
+            original = imagen_rgba_region(
+                self._before, bx0, by0, bx1, by1)
+            sub[..., 3] = original[..., 3]
+        escribir_rgba_region(self._work, bx0, by0, sub)
+        self._dirty = True
 
     # --------------------------------------------------------- volcado
-    def _marcar_sucio(self, x0, y0, x1, y1):
-        if self._dirty is None:
-            self._dirty = [x0, y0, x1, y1]
-        else:
-            d = self._dirty
-            d[0] = min(d[0], x0); d[1] = min(d[1], y0)
-            d[2] = max(d[2], x1); d[3] = max(d[3], y1)
-
     def _flush_preview(self):
-        """Vuelca a la imagen de trabajo SOLO el parche modificado desde el
-        último volcado (des-premultiplicar la imagen entera costaba ~1 s por
-        movimiento en 4000×5000). Pintar in place sobre layer.image, como el
-        pincel, invalida la caché de composición por cacheKey."""
-        if self._dirty is None:
+        """Solicita un repintado si algún ROI se volcó desde el último evento."""
+        if not self._dirty:
             return
-        x0, y0, x1, y1 = self._dirty
-        self._dirty = None
-        sub = np.ascontiguousarray(self._unpremultiply(self._buf[y0:y1, x0:x1]))
-        if self._lock:
-            sub[..., 3] = self._alpha0[y0:y1, x0:x1]
-        patch = QImage(sub.data, x1 - x0, y1 - y0, 4 * (x1 - x0),
-                       QImage.Format_RGBA8888)
-        from PySide6.QtGui import QPainter
-        p = QPainter(self._work)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        p.drawImage(x0, y0, patch)
-        p.end()
+        self._dirty = False
         self.canvas.update()
 
     def _commit(self):
@@ -241,22 +210,7 @@ class SmudgeTool(BaseTool):
             self.canvas.undo_stack.push(PaintCommand(
                 self.canvas, self.canvas.active_layer_index,
                 self._before, after, t("hist.smudge"), tool_id="smudge", confine=True))
-        self._before = self._buf = self._carry = self._mask = self._clip = self._outbuf = None
-        self._alpha0 = None
+        self._before = self._buf = self._carry = self._mask = None
         self._lock = False
         self._work = None
-        self._dirty = None
-
-    # --------------------------------------------------------- QImage<->numpy
-    def _qimage_to_array(self, qimg):
-        qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
-        W, H = qimg.width(), qimg.height()
-        bpl = qimg.bytesPerLine()
-        buf = np.frombuffer(qimg.constBits(), np.uint8).reshape(H, bpl)
-        return buf[:, :W * 4].reshape(H, W, 4).copy()
-
-    def _array_to_qimage(self, arr):
-        self._outbuf = np.ascontiguousarray(arr)
-        qimg = QImage(self._outbuf.data, self._W, self._H, 4 * self._W,
-                      QImage.Format_RGBA8888)
-        return qimg.copy()
+        self._dirty = False

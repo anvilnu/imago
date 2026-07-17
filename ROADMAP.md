@@ -236,13 +236,25 @@ prioridades críticas, porque afectan a la integridad del documento.
   los 50 sondeos/minuto anteriores. Cubierto por 3 regresiones de caché,
   agrupación/reposo e invalidación visual.
 
-- [ ] **Evitar matrices de imagen completa al iniciar herramientas locales.**
+- [x] **Evitar matrices de imagen completa al iniciar herramientas locales.**
   Dedo, Licuar, Esponja y Sobreexponer/Subexponer convierten la capa completa y
   crean buffers `float32`; una imagen RGBA de 4000×5000 ocupa ~80 MB en
   `uint8` y ~320 MB por copia `float32`, con picos que pueden superar 500 MB.
   Trabajar por teselas/ROI alrededor del trazo o mantener un buffer compartido
   con copia diferida. Revisar también coberturas completas de pincel,
   aerógrafo y clonado.
+  Completado el 17-07-2026. `tools/roi_buffers.py` aporta estado RGBA
+  premultiplicado y coberturas `float32` por teselas de 256×256, cargadas solo
+  donde pasa el pincel, además de conversiones y selección limitadas al ROI.
+  Dedo y Licuar conservan la precisión flotante entre estampas; Esponja y
+  Sobre/Subexponer recalculan cada parche desde el original y su cobertura
+  dispersa, manteniendo selección, bloqueo alfa, preview y deshacer. Pincel,
+  Aerógrafo, Clonado y la cobertura de Sustituir color usan la misma estructura.
+  Medición Windows en 4000×5000 con punta de 101 px: los arrays auxiliares al
+  pulsar bajan de unos 400–420 MB a 2,20 MB (Dedo), 0,04 MB (Licuar) y 0,54 MB
+  (Esponja y Sobre/Subexponer), con arranques de 18–26 ms. Cubierto por 5
+  regresiones de teselas, memoria independiente del documento, resultado,
+  deshacer, selección, alfa y coberturas de las otras herramientas.
 
 - [ ] **Pasar el rectángulo sucio conocido a `PaintCommand`.** El comando
   guarda únicamente el parche, pero para encontrarlo crea una comparación

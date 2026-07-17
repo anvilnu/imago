@@ -10,6 +10,7 @@ from i18n import t
 from tools.base_tool import BaseTool
 from tools.commands import PaintCommand
 from tools import pattern_tiles
+from tools.roi_buffers import CoberturaDispersa
 from tools.numpy_utils import shape_field, SHAPES, get_kernel, qimage_to_bgra, bgra_to_qimage, recompose_alpha, CALLIG_ASPECT
 
 
@@ -22,9 +23,9 @@ class PenTool(BaseTool):
         self.tool_id = "pen"
         self.history_name = t("tool.name.pen")  # 📝 Texto con el que aparece en el Historial
         # 🧮 Buffers del MOTOR DE COBERTURA (solo Pincel sólido; ver _use_coverage).
-        # El trazo se acumula en una máscara float [0..1] tomando el MÁXIMO por
-        # estampa (no SourceOver), así el solapamiento ya no infla la opacidad ni
-        # genera bandeado/costras. La capa se recompone en vivo desde el original.
+        # El trazo se acumula por teselas en una máscara float [0..1] tomando el
+        # MÁXIMO por estampa (no SourceOver), así el solapamiento no infla la
+        # opacidad ni reserva una matriz del tamaño completo del documento.
         self._coverage = None
         self._kernel_cache = {}
         self._coverage_active = False
@@ -101,7 +102,7 @@ class PenTool(BaseTool):
         # El motor de cobertura (BGRA) no aplica al pintar en la máscara.
         self._coverage_active = self._use_coverage() and not self._paint_on_mask
         if self._coverage_active:
-            self._coverage = np.zeros((target.height(), target.width()), dtype=np.float32)
+            self._coverage = CoberturaDispersa(target.width(), target.height())
             self._kernel_cache = {}
             if straight:
                 self._coverage_stroke(start, click)   # línea recta desde el último punto
@@ -336,7 +337,7 @@ class PenTool(BaseTool):
                             antialias=self._stroke_antialias())
         R = (kernel.shape[0] - 1) // 2
         px, py = point.x(), point.y()
-        H, W = self._coverage.shape
+        H, W = self._coverage.alto, self._coverage.ancho
 
         x0, y0 = px - R, py - R
         cx0, cy0 = max(0, x0), max(0, y0)
@@ -345,8 +346,7 @@ class PenTool(BaseTool):
             return None  # estampa completamente fuera del lienzo
 
         ksub = kernel[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
-        region = self._coverage[cy0:cy1, cx0:cx1]
-        np.maximum(region, ksub, out=region)
+        self._coverage.maximo(cx0, cy0, ksub)
         return (cx0, cy0, cx1, cy1)
 
     def _recompose(self, x0, y0, x1, y1):
@@ -356,7 +356,7 @@ class PenTool(BaseTool):
         w, h = x1 - x0, y1 - y0
         sub = self.image_before_stroke.copy(x0, y0, w, h).convertToFormat(QImage.Format.Format_ARGB32)
         o = qimage_to_bgra(sub).astype(np.float32)  # H×W×4 (B,G,R,A) 0..255
-        cov = self._coverage[y0:y1, x0:x1]
+        cov = self._coverage.region(x0, y0, x1, y1)
         # 🌫️ Opacidad del trazo (solo el Pincel puro, independiente del alfa
         # del color): escala la cobertura al recomponer, así es UNIFORME en
         # todo el trazo (el solapado de estampas no acumula opacidad).
@@ -902,7 +902,7 @@ class ReplaceColorTool(PenTool):
         self.replace_target = QColor(src.pixel(x, y))
 
         H, W = self.image_before_stroke.height(), self.image_before_stroke.width()
-        self._coverage = np.zeros((H, W), dtype=np.float32)
+        self._coverage = CoberturaDispersa(W, H)
         self._match = self._build_match_mask(src)
         self._rc_stamp(point)
         self.canvas.update()
@@ -975,7 +975,7 @@ class ReplaceColorTool(PenTool):
         kernel = self._get_kernel(radius, hardness, shape)
         R = (kernel.shape[0] - 1) // 2
         px, py = point.x(), point.y()
-        H, W = self._coverage.shape
+        H, W = self._coverage.alto, self._coverage.ancho
         x0, y0 = px - R, py - R
         cx0, cy0 = max(0, x0), max(0, y0)
         cx1, cy1 = min(W, px + R + 1), min(H, py + R + 1)
@@ -983,6 +983,5 @@ class ReplaceColorTool(PenTool):
             return
         ksub = kernel[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
         msub = self._match[cy0:cy1, cx0:cx1]
-        region = self._coverage[cy0:cy1, cx0:cx1]
-        np.maximum(region, ksub * msub, out=region)
+        self._coverage.maximo(cx0, cy0, ksub * msub)
         self._recompose(cx0, cy0, cx1, cy1)

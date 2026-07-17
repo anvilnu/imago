@@ -656,3 +656,14 @@ Photopea (julio 2026). Ir marcando `[x]` según se implementen.
   2400×1600, 8 capas y 8 efectos se eliminaron 50 composiciones/minuto en reposo
   (35,63 ms cada una en caliente). Cubierto por 3 regresiones; suite completa:
   73 pruebas en Windows, 3 POSIX omitidas condicionalmente.
+- [x] **Buffers locales y coberturas dispersas de pincel** — HECHO (17-07-2026).
+  Dedo y Licuar ya no convierten la capa completa a RGBA `float32`: conservan
+  su estado premultiplicado en teselas de 256×256 cargadas bajo demanda.
+  Esponja y Sobre/Subexponer procesan solo el ROI sucio desde la imagen original
+  y acumulan cobertura por teselas. El mismo almacén disperso sustituye las
+  matrices completas de cobertura de Pincel, Aerógrafo, Clonado y Sustituir
+  color. En 4000×5000 y punta de 101 px, los auxiliares NumPy al pulsar quedan
+  entre 0,04 y 2,20 MiB frente a unos 400–420 MB anteriores, con 18–26 ms de
+  inicio. Se mantienen selección, bloqueo alfa, precisión flotante, preview y
+  deshacer. Cubierto por 5 regresiones; suite completa: 78 pruebas en Windows,
+  3 POSIX omitidas condicionalmente.

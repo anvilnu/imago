@@ -6,13 +6,14 @@ from PySide6.QtCore import Qt, QTimer, QLineF
 from tools.base_tool import BaseTool
 from tools.commands import PaintCommand
 from tools.numpy_utils import SHAPES, get_kernel, qimage_to_bgra, bgra_to_qimage, recompose_alpha
+from tools.roi_buffers import CoberturaDispersa
 
 
 
 class AirbrushTool(BaseTool):
     """Aerógrafo con MOTOR DE DENSIDAD (numpy): mientras se mantiene pulsado,
     un temporizador deposita "pintura" a ritmo constante. La pintura se acumula
-    en un buffer de densidad (0..1) y la capa se recompone desde la imagen
+    en una cobertura dispersa por teselas (0..1) y la capa se recompone desde la imagen
     original como original-sobre-color·densidad. Ventajas frente al SourceOver
     repetido: acumulación suave y predecible, respeta forma de punta y selección,
     y -lo importante- la dosis de cada "tick" se REPARTE a lo largo del camino
@@ -55,7 +56,7 @@ class AirbrushTool(BaseTool):
         self._on_mask = self.canvas.paint_on_mask()   # 🎭 destino: máscara o píxeles
         layer = self.canvas.paint_target()
         self._before = QImage(layer)
-        self._density = np.zeros((layer.height(), layer.width()), dtype=np.float32)
+        self._density = CoberturaDispersa(layer.width(), layer.height())
         self._kernel_cache = {}
         self._active = True
         self._timer.start()
@@ -120,15 +121,13 @@ class AirbrushTool(BaseTool):
         ker = get_kernel(radius, hardness, shape)
         R = (ker.shape[0] - 1) // 2
         px, py = int(round(point.x())), int(round(point.y()))
-        H, W = self._density.shape
+        H, W = self._density.alto, self._density.ancho
         x0, y0 = px - R, py - R
         cx0, cy0 = max(0, x0), max(0, y0)
         cx1, cy1 = min(W, px + R + 1), min(H, py + R + 1)
         if cx1 <= cx0 or cy1 <= cy0:
             return
         ksub = ker[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
-        reg = self._density[cy0:cy1, cx0:cx1]
-
         if getattr(self.canvas, 'airbrush_texture', 'smooth') == 'speckled':
             rnd = np.random.random(ksub.shape).astype(np.float32)
             add = np.where(rnd < ksub * dose * self.SPECK_PROB,
@@ -136,7 +135,7 @@ class AirbrushTool(BaseTool):
         else:
             add = ksub * dose
 
-        reg[:] = np.minimum(reg + add, 1.0)
+        self._density.sumar_saturado(cx0, cy0, add)
         self._recompose(cx0, cy0, cx1, cy1)
 
     def _recompose(self, x0, y0, x1, y1):
@@ -145,7 +144,7 @@ class AirbrushTool(BaseTool):
         w, h = x1 - x0, y1 - y0
         sub = self._before.copy(x0, y0, w, h).convertToFormat(QImage.Format.Format_ARGB32)
         o = qimage_to_bgra(sub).astype(np.float32)
-        dens = self._density[y0:y1, x0:x1]
+        dens = self._density.region(x0, y0, x1, y1)
 
         # 🔒 Bloqueo de transparencia (SourceAtop a mano; el modo Source del
         # volcado pisa el de apply_selection_clip): densidad pesada por el alfa
