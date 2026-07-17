@@ -13,6 +13,8 @@ import json
 import math
 import struct
 import zipfile
+from copy import deepcopy
+from types import SimpleNamespace
 from atomic_io import ReemplazoAtomico
 from i18n import t
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
@@ -30,6 +32,125 @@ MAX_ENTRY_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED_BYTES = 8 * 1024 * 1024 * 1024
 MAX_DOCUMENT_IMAGE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 1 + 2 * MAX_LAYERS
+
+
+class _EfectoInstantanea:
+    """Copia inmutable del diccionario persistente de un efecto de capa."""
+
+    def __init__(self, datos):
+        self._datos = deepcopy(datos)
+
+    def to_dict(self):
+        return deepcopy(self._datos)
+
+
+class _GrupoInstantanea:
+    def __init__(self, grupo):
+        self.name = grupo.name
+        self.visible = bool(grupo.visible)
+        self.expanded = bool(grupo.expanded)
+        self.parent = None
+
+    def chain(self):
+        grupo, cadena = self, []
+        while grupo is not None:
+            cadena.append(grupo)
+            grupo = grupo.parent
+        return cadena
+
+
+class _CapaInstantanea:
+    """Solo los datos que consumen los guardadores de proyecto y ORA."""
+
+    def __init__(self, capa, imagen, grupo=None, incluir_efectos=True):
+        self.image = QImage(imagen)
+        self._imagen_render = QImage(imagen)
+        self.mask = QImage(capa.mask) if getattr(capa, "mask", None) is not None else None
+        self.name = capa.name
+        self.visible = bool(capa.visible)
+        self.opacity = int(capa.opacity)
+        self.blend_mode = capa.blend_mode
+        self.alpha_locked = bool(getattr(capa, "alpha_locked", False))
+        self.pixels_locked = bool(getattr(capa, "pixels_locked", False))
+        self.position_locked = bool(getattr(capa, "position_locked", False))
+        self.clipped = bool(getattr(capa, "clipped", False))
+        self.group = grupo
+        self.frame_delay = getattr(capa, "frame_delay", None)
+        self.is_text = bool(getattr(capa, "is_text", False))
+        if self.is_text:
+            self.text_html = capa.text_html
+            self.text_origin = capa.text_origin
+            self.text_angle = float(getattr(capa, "text_angle", 0))
+            self.text_vertical = bool(getattr(capa, "text_vertical", False))
+            self.text_spacing = int(getattr(capa, "text_spacing", 0))
+            self.text_box_width = int(getattr(capa, "text_box_width", 0))
+        self.effects = []
+        if incluir_efectos:
+            self.effects = [
+                _EfectoInstantanea(efecto.to_dict())
+                for efecto in getattr(capa, "effects", ())
+            ]
+
+    def render_image(self):
+        return self._imagen_render
+
+
+class _InstantaneaORA(SimpleNamespace):
+    def render_flat_image(self, background=Qt.transparent):
+        del background
+        return self.imagen_plana
+
+
+def _copiar_grupos_y_mapa(layers):
+    """Clona la jerarquía de grupos sin conservar objetos mutables del lienzo."""
+    from models.layer import grupos_del_lienzo
+    originales = grupos_del_lienzo(layers)
+    mapa = {id(grupo): _GrupoInstantanea(grupo) for grupo in originales}
+    for grupo in originales:
+        padre = getattr(grupo, "parent", None)
+        mapa[id(grupo)].parent = mapa.get(id(padre)) if padre is not None else None
+    return mapa
+
+
+def crear_instantanea_proyecto(canvas):
+    """Captura en el hilo GUI un estado coherente y desligado para guardar.
+
+    QImage usa copia implícita: construir otra QImage es rápido y cualquier
+    edición posterior separa sus píxeles mediante copy-on-write. La compresión
+    PNG y ZIP puede hacerse después en un worker sin leer el lienzo vivo.
+    """
+    mapa_grupos = _copiar_grupos_y_mapa(canvas.layers)
+    capas = []
+    for capa in canvas.layers:
+        imagen = capa.render_image() if getattr(capa, "is_text", False) else capa.image
+        grupo = mapa_grupos.get(id(getattr(capa, "group", None)))
+        capas.append(_CapaInstantanea(capa, imagen, grupo=grupo))
+    return SimpleNamespace(
+        base_width=int(canvas.base_width),
+        base_height=int(canvas.base_height),
+        dpi=float(getattr(canvas, "dpi", 96.0) or 96.0),
+        active_layer_index=int(canvas.active_layer_index),
+        layer_counter=int(getattr(canvas, "layer_counter", len(capas))),
+        guides=deepcopy(list(getattr(canvas, "guides", ()))),
+        layers=capas,
+    )
+
+
+def crear_instantanea_ora(canvas):
+    """Captura capas y compuesto para que el ORA se comprima fuera del GUI."""
+    mapa_grupos = _copiar_grupos_y_mapa(canvas.layers)
+    capas = []
+    for capa in canvas.layers:
+        grupo = mapa_grupos.get(id(getattr(capa, "group", None)))
+        capas.append(_CapaInstantanea(
+            capa, capa.render_image(), grupo=grupo, incluir_efectos=False))
+    return _InstantaneaORA(
+        base_width=int(canvas.base_width),
+        base_height=int(canvas.base_height),
+        dpi=float(getattr(canvas, "dpi", 96.0) or 96.0),
+        layers=capas,
+        imagen_plana=QImage(canvas.render_flat_image(background=Qt.transparent)),
+    )
 
 
 class ErrorCargaProyecto(ValueError):
@@ -354,7 +475,7 @@ def _ora_composite_op(blend):
     return tabla.get(blend, "svg:src-over")
 
 
-def save_ora(canvas, file_path):
+def save_ora(canvas, file_path, report=None, token=None):
     """Exporta el lienzo a OpenRaster (.ora), el formato de capas que abren
     GIMP y Krita: un ZIP con 'mimetype' + stack.xml + un PNG por capa + la
     imagen aplanada (mergedimage.png) y una miniatura. Las máscaras se APLICAN
@@ -374,6 +495,8 @@ def save_ora(canvas, file_path):
     # abajo (índice 0) hacia arriba -> se recorre invertido.
     total = len(canvas.layers)
     for pos, layer in enumerate(reversed(canvas.layers)):
+        if token is not None and token.cancelled:
+            return False
         idx = total - 1 - pos
         ruta = f"data/layer{idx}.png"
         # render_image() entrega la capa lista para componer (máscara aplicada
@@ -383,6 +506,8 @@ def save_ora(canvas, file_path):
         base_clip = base_de_recorte(canvas.layers, idx)
         entradas.append((ruta, _png_bytes(
             render_recortada(layer, base_clip, con_efectos=False))))
+        if report is not None and total:
+            report(5 + int(60 * (pos + 1) / total))
         lineas.append(
             '    <layer name=%s src="%s" x="0" y="0" opacity="%.4f" '
             'visibility="%s" composite-op="%s"/>'
@@ -410,9 +535,15 @@ def save_ora(canvas, file_path):
                         compress_type=zipfile.ZIP_STORED)
             zf.writestr("stack.xml", "\n".join(lineas))
             for ruta, datos in entradas:
+                if token is not None and token.cancelled:
+                    return False
                 zf.writestr(ruta, datos)
             zf.writestr("mergedimage.png", _png_bytes(plana))
             zf.writestr("Thumbnails/thumbnail.png", _png_bytes(thumb))
+        if token is not None and token.cancelled:
+            return False
+        if report is not None:
+            report(95)
         return reemplazo.confirmar()
     except OSError:
         return False
@@ -421,7 +552,7 @@ def save_ora(canvas, file_path):
             reemplazo.cancelar()
 
 
-def save_project(canvas, file_path):
+def save_project(canvas, file_path, report=None, token=None):
     """Guarda el lienzo completo (todas las capas y sus propiedades) en un .imago.
     Devuelve True si tuvo éxito."""
     manifest = {
@@ -456,6 +587,8 @@ def save_project(canvas, file_path):
         reemplazo = ReemplazoAtomico(file_path)
         with zipfile.ZipFile(reemplazo.ruta, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, layer in enumerate(canvas.layers):
+                if token is not None and token.cancelled:
+                    return False
                 layer_file = f"layers/layer_{i}.png"
                 blend = getattr(layer, "blend_mode", 0)
                 blend_val = blend.value if hasattr(blend, "value") else int(blend)
@@ -532,8 +665,14 @@ def save_project(canvas, file_path):
                     zf.writestr(mask_file, mba.data())
 
                 manifest["layers"].append(entry)
+                if report is not None and canvas.layers:
+                    report(5 + int(85 * (i + 1) / len(canvas.layers)))
 
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        if token is not None and token.cancelled:
+            return False
+        if report is not None:
+            report(95)
         return reemplazo.confirmar()
     except (OSError, zipfile.BadZipFile):
         return False
@@ -542,12 +681,14 @@ def save_project(canvas, file_path):
             reemplazo.cancelar()
 
 
-def load_project(file_path):
+def load_project(file_path, report=None, token=None):
     """Carga un proyecto .imago y devuelve un diccionario con todos los datos
     listos para aplicar al lienzo con canvas.apply_project_data().
     Lanza ErrorCargaProyecto si está corrupto, es incompatible o excede los
     límites seguros del formato."""
     try:
+        if token is not None and token.cancelled:
+            return None
         with zipfile.ZipFile(file_path, "r") as zf:
             infos = zf.infolist()
             if len(infos) > MAX_ARCHIVE_ENTRIES:
@@ -590,6 +731,8 @@ def load_project(file_path):
 
             layers = []
             for pos, meta in enumerate(metas):
+                if token is not None and token.cancelled:
+                    return None
                 png_bytes = _leer_entrada(zf, meta["file"])
                 _validar_png(png_bytes, meta["file"], width, height)
                 img = QImage.fromData(png_bytes, "PNG")
@@ -658,6 +801,8 @@ def load_project(file_path):
                     layer.group = grupos[g_id]
 
                 layers.append(layer)
+                if report is not None and metas:
+                    report(10 + int(85 * (pos + 1) / len(metas)))
 
     except ErrorCargaProyecto:
         raise
@@ -668,6 +813,8 @@ def load_project(file_path):
         detalle = str(e) or type(e).__name__
         raise ErrorCargaProyecto(t("err.invalid_project", e=detalle)) from e
 
+    if report is not None:
+        report(100)
     return {
         "width": width,
         "height": height,

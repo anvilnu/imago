@@ -468,6 +468,16 @@ diera problemas, el usuario puede forzar el backend a mano con
   reducida por lienzo, compartida con su tooltip. Tras regenerarla llama a
   `confirmar_miniatura_actualizada()`. Cualquier propiedad nueva que altere el
   compuesto debe formar parte de `_huella_visual()`.
+- **E/S pesada de documentos:** no comprimas ni decodifiques imágenes, ZIP,
+  Pillow o PDF en el hilo GUI. Captura primero una instantánea coherente con
+  `crear_instantanea_proyecto()`/`crear_instantanea_ora()` o un `QImage`
+  desligado y ejecuta el trabajo mediante `_ejecutar_trabajo_io()`. El
+  autoguardado comparte `main._io_runner`, cuya cola serial evita operaciones
+  pesadas simultáneas. El worker no debe leer widgets ni `QSettings`; captura
+  antes esos valores simples. Comprueba el token entre capas/fotogramas y antes
+  de `os.replace()`. Tras Guardar, solo marca limpio el lienzo si su
+  `revision_autoguardado` sigue siendo la capturada: una edición posterior a la
+  instantánea debe continuar pendiente.
 - **Herramientas locales y memoria:** Dedo, Licuar, Esponja y Sobre/Subexponer
   nunca deben convertir la capa completa a NumPy al empezar un trazo. Usa
   `ImagenPremultiplicadaDispersa`, `CoberturaDispersa` y los helpers de ROI de

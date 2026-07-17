@@ -216,7 +216,7 @@ class AccionesMenuVer:
         self.ai_cancel_btn.setCursor(Qt.PointingHandCursor)
         self.ai_cancel_btn.setFixedHeight(20)
         self.ai_cancel_btn.setVisible(False)
-        self.ai_cancel_btn.clicked.connect(self._ai_cancel_current)
+        self.ai_cancel_btn.clicked.connect(self._cancel_current_status_operation)
         help_layout.addWidget(self.ai_cancel_btn, 0, Qt.AlignVCenter)
 
         help_layout.addStretch(1)   # absorbe el sobrante a la derecha del par texto+barra
@@ -268,6 +268,13 @@ class AccionesMenuVer:
         rl.addWidget(self.btn_zoom_in)
 
         self.status_bar.addPermanentWidget(right)
+
+    def _cancel_current_status_operation(self):
+        """El botón compartido cancela la operación que posee el indicador."""
+        if getattr(self, "_ai_busy", False):
+            self._ai_cancel_current()
+        elif getattr(self, "_io_handle", None) is not None:
+            self._io_cancel_current()
 
     def _refresh_tool_help(self):
         """Muestra la ayuda de la herramienta activa. Para 'Formas' usa la ayuda

@@ -11,17 +11,30 @@ conserva todas las capas y sus propiedades."""
 
 import os
 import json
+import weakref
 from atomic_io import escribir_atomico
 from PySide6.QtCore import QTimer
 import app_paths
+from ai.runner import InferenceRunner
 from models.document_state import documento_pendiente
-from models.project_io import save_project
+from models.project_io import crear_instantanea_proyecto, save_project
 
 
 class AutoSaveManager:
     def __init__(self, main_window, interval_min=3):
         self.main = main_window
         self._counter = 0
+        # Una sola cola de E/S para toda la ventana: evita que un autoguardado
+        # comprima a la vez que Guardar/Exportar sobre el mismo documento y
+        # reduce los picos de CPU, RAM y disco.
+        runner = getattr(main_window, "_io_runner", None)
+        if runner is None:
+            runner = InferenceRunner(main_window)
+            main_window._io_runner = runner
+        self._runner = runner
+        self._handle = None
+        self._repetir = False
+        self._detenido = False
 
         base = app_paths.base_datos()
         if not base:
@@ -37,10 +50,15 @@ class AutoSaveManager:
         self.timer.timeout.connect(self.snapshot)
 
     def start(self):
+        self._detenido = False
         self.timer.start()
 
     def stop(self):
+        self._detenido = True
         self.timer.stop()
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle = None
 
     # ------------------------------------------------------------------ util
     def _session_path(self):
@@ -61,6 +79,108 @@ class AutoSaveManager:
 
     # --------------------------------------------------------------- escribir
     def snapshot(self):
+        """Captura rápido en GUI y comprime/escribe en el worker de E/S."""
+        # Los tests y consumidores mínimos que construyen la clase con __new__
+        # conservan el camino síncrono histórico.
+        if not hasattr(self, "_runner"):
+            return self._snapshot_sincrono()
+        if self._detenido:
+            return None
+        if self._handle is not None:
+            self._repetir = True
+            return None
+
+        trabajos = []
+        entries = []
+        keep = set()
+        hay_pendientes = False
+        for i, canvas in self._iter_canvases():
+            if not self._needs_recovery(canvas):
+                continue
+            hay_pendientes = True
+            if not hasattr(canvas, "_autosave_id"):
+                self._counter += 1
+                canvas._autosave_id = self._counter
+            fname = "doc_%d.imago" % canvas._autosave_id
+            path = os.path.join(self.dir, fname)
+            revision = canvas.revision_autoguardado
+            if (getattr(canvas, "_autosave_revision", None) != revision
+                    or not os.path.exists(path)):
+                trabajos.append({
+                    "canvas": weakref.ref(canvas),
+                    "revision": revision,
+                    "path": path,
+                    "snapshot": crear_instantanea_proyecto(canvas),
+                })
+            entries.append({
+                "file": fname,
+                "title": self.main.tabs.tabText(i),
+                "project_path": getattr(canvas, "project_path", None),
+            })
+            keep.add(fname)
+
+        if not hay_pendientes:
+            self.clear()
+            return None
+
+        def trabajo(_report, token):
+            snapshot_completo = True
+            guardados = []
+            for item in trabajos:
+                if token.cancelled:
+                    return None
+                ok = save_project(item["snapshot"], item["path"], token=token)
+                guardados.append((item["canvas"], item["revision"], ok))
+                if not ok:
+                    snapshot_completo = False
+
+            # Una copia fallida que ya tenía versión anterior se conserva, pero
+            # no se publica un manifiesto que mezcle revisiones distintas.
+            if any(not os.path.exists(os.path.join(self.dir, e["file"]))
+                   for e in entries):
+                snapshot_completo = False
+            publicado = False
+            if entries and snapshot_completo and not token.cancelled:
+                def _escribir_session(ruta_temporal):
+                    with open(ruta_temporal, "w", encoding="utf-8") as f:
+                        json.dump({"entries": entries}, f, ensure_ascii=False)
+                    return not token.cancelled
+
+                publicado = escribir_atomico(
+                    self._session_path(), _escribir_session)
+                if publicado and not token.cancelled:
+                    self._prune(keep)
+            return guardados, publicado
+
+        def terminado(resultado):
+            self._handle = None
+            if resultado is not None:
+                guardados, _publicado = resultado
+                for ref_canvas, revision, ok in guardados:
+                    canvas = ref_canvas()
+                    if ok and canvas is not None:
+                        if canvas.revision_autoguardado == revision:
+                            canvas._autosave_revision = revision
+                        else:
+                            # Hubo otra edición mientras se comprimía la copia:
+                            # encadenar una instantánea de la revisión nueva.
+                            self._repetir = True
+            self._programar_repeticion()
+
+        def error(_mensaje):
+            self._handle = None
+            self._programar_repeticion()
+
+        self._handle = self._runner.submit(
+            trabajo, on_done=terminado, on_error=error)
+        return None
+
+    def _programar_repeticion(self):
+        if self._repetir and not self._detenido:
+            self._repetir = False
+            QTimer.singleShot(0, self.snapshot)
+
+    def _snapshot_sincrono(self):
         """Escribe copias de las pestañas con cambios sin guardar + el manifiesto.
         Solo reescribe un documento si cambió desde la última copia (ahorra disco).
 

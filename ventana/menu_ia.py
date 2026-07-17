@@ -76,15 +76,40 @@ class AccionesMenuIA:
         override del cursor se pone/quita UNA sola vez aunque se llame varias
         veces con el mismo estado (evita dejarlo pegado en cadenas descarga→
         inferencia o en caminos de error/cancelación)."""
+        ya_estaba_ocupado = getattr(self, "_ai_busy", False)
         self._ai_busy = busy
+        acciones_archivo = [
+            getattr(self, nombre, None) for nombre in (
+                "save_action", "save_as_action", "export_pdf_action",
+                "export_ora_action", "export_anim_action")
+        ]
         if busy:
+            if not ya_estaba_ocupado:
+                self._ai_file_action_states = [
+                    (accion, accion.isEnabled()) for accion in acciones_archivo
+                    if accion is not None
+                ]
+                for accion, _estado in self._ai_file_action_states:
+                    accion.setEnabled(False)
             for act in getattr(self, "_ai_actions", []):
                 act.setEnabled(False)
         elif hasattr(self, "update_ai_menu_state"):
+            for accion, estado in getattr(self, "_ai_file_action_states", ()):
+                try:
+                    accion.setEnabled(estado)
+                except RuntimeError:
+                    pass
+            self._ai_file_action_states = []
             # Al terminar, restaurar respetando el CONTEXTO (capa activa; el
             # panorama no requiere lienzo), no reactivar todo a ciegas.
             self.update_ai_menu_state()
         else:
+            for accion, estado in getattr(self, "_ai_file_action_states", ()):
+                try:
+                    accion.setEnabled(estado)
+                except RuntimeError:
+                    pass
+            self._ai_file_action_states = []
             for act in getattr(self, "_ai_actions", []):
                 act.setEnabled(True)
         from PySide6.QtWidgets import QApplication

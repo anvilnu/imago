@@ -1040,6 +1040,11 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
 
     def close_tab(self, index):
         if index == -1: return
+        # Un guardado/exportación mantiene una instantánea independiente, pero
+        # cerrar su documento durante el bucle anidado complicaría el retorno y
+        # sus avisos. El botón Cancelar permite detenerlo primero de forma clara.
+        if getattr(self, "_io_handle", None) is not None:
+            return
         marker = self.tabs.widget(index)
         # La preview no forma parte aún del historial: restaurarla ANTES de
         # comprobar/guardar evita publicar por accidente píxeles provisionales.
@@ -1600,6 +1605,14 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
     def closeEvent(self, event):
         from PySide6.QtWidgets import QMessageBox
         from models.document_state import documento_pendiente
+
+        # La primera pulsación durante una operación solicita cancelación y no
+        # destruye la ventana mientras el worker libera su temporal. Tras volver
+        # el control, el usuario puede cerrar con el flujo normal y seguro.
+        if getattr(self, "_io_handle", None) is not None:
+            self._io_cancel_current()
+            event.ignore()
+            return
 
         # Ninguna preview provisional debe entrar en un guardado provocado por
         # el cierre de la aplicación.

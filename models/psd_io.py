@@ -183,7 +183,7 @@ def _leer_dpi(psd):
     return None
 
 
-def load_psd(file_path):
+def load_psd(file_path, report=None, token=None):
     """Carga un .psd/.psb y devuelve el dict de proyecto (ver docstring del
     modulo). Lanza ImportError si falta psd-tools y ValueError si el archivo
     no se puede leer."""
@@ -197,7 +197,10 @@ def load_psd(file_path):
     W, H = psd.width, psd.height
     fusion = _mapa_fusion()
     capas, omitidas = [], []
-    for capa, visible, opacidad in _iterar(psd):
+    elementos = list(_iterar(psd))
+    for indice, (capa, visible, opacidad) in enumerate(elementos):
+        if token is not None and token.cancelled:
+            return None
         try:
             layer = _convertir_capa(psd, capa, W, H, visible, opacidad, fusion)
         except Exception:
@@ -206,6 +209,8 @@ def load_psd(file_path):
             omitidas.append(f"{capa.name} ({capa.kind})")
         else:
             capas.append(layer)
+        if report is not None and elementos:
+            report(5 + int(85 * (indice + 1) / len(elementos)))
 
     aplanado = False
     if not capas:
@@ -233,6 +238,10 @@ def load_psd(file_path):
         omitidas = []  # ya no aplica: se abre aplanado y se avisa aparte
         aplanado = True
 
+    if token is not None and token.cancelled:
+        return None
+    if report is not None:
+        report(100)
     return {
         "width": W,
         "height": H,

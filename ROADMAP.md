@@ -272,12 +272,26 @@ prioridades críticas, porque afectan a la integridad del documento.
   27,06 ms y ~80 MB temporales a 0,10 ms y ~40 KB. Cubierto por 5 regresiones
   específicas y la suite completa de 83 pruebas (3 POSIX omitidas en Windows).
 
-- [ ] **Sacar autoguardado, guardado y exportaciones pesadas del hilo GUI.**
+- [x] **Sacar autoguardado, guardado y exportaciones pesadas del hilo GUI.**
   El `QTimer` de autoguardado comprime secuencialmente todas las capas en el
   hilo de interfaz cada tres minutos; guardar, cargar y algunos exports hacen
   lo mismo. Crear una instantánea coherente y desasociada del documento en el
   hilo GUI y comprimir/escribir en un worker, con cancelación, progreso y una
   sola operación de E/S pesada por documento.
+  Completado el 18-07-2026. `.imago` captura metadatos, grupos, capas, máscaras
+  y efectos mediante copias implícitas de `QImage`: la instantánea queda
+  congelada por copy-on-write y la compresión PNG/ZIP se ejecuta después sin
+  leer el lienzo vivo. El mismo patrón cubre imagen plana (incluido PNG8 y
+  EXIF), PDF, ORA y GIF/WebP. Cargar `.imago`, PSD, imágenes y animaciones, y
+  rasterizar SVG también se ejecutan en el worker. Autoguardado y operaciones
+  manuales comparten una única cola serial, con progreso y cancelación
+  cooperativa; cancelar nunca publica el temporal. La espera usa un bucle Qt
+  anidado, por lo que la ventana sigue atendiendo eventos. Si el usuario edita
+  durante un guardado, se publica la instantánea solicitada pero el documento
+  nuevo permanece pendiente en vez de marcarse limpio por error. Cubierto por
+  4 regresiones nuevas de hilo, capacidad de respuesta, aislamiento de la
+  instantánea y cancelación, además de la suite completa de 87 pruebas (3
+  POSIX omitidas en Windows).
 
 - [ ] **Medir y presupuestar las previews y efectos de capa.** La preview
   reducida y el debounce existentes son buenos, pero Aceptar recalcula a

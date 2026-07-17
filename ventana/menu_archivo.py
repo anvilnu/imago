@@ -61,6 +61,128 @@ class _RecentItem(QWidget):
 
 
 class AccionesMenuArchivo:
+    def _tab_index_for_canvas(self, canvas):
+        if not hasattr(self.tabs, "count"):
+            return self.tabs.currentIndex()
+        for indice in range(self.tabs.count()):
+            marker = self.tabs.widget(indice)
+            if marker is not None and getattr(marker, "canvas", None) is canvas:
+                return indice
+        return -1
+
+    def _io_set_busy(self, busy, mensaje=None):
+        """Presenta una operación de archivo sin bloquear la interacción Qt."""
+        self._io_busy = bool(busy)
+        acciones = [
+            getattr(self, nombre, None) for nombre in (
+                "save_action", "save_as_action", "export_pdf_action",
+                "export_ora_action", "export_anim_action", "close_tab_action")
+        ]
+        acciones.extend(getattr(self, "_ai_actions", ()))
+        if busy:
+            self._io_action_states = [
+                (accion, accion.isEnabled()) for accion in acciones
+                if accion is not None
+            ]
+            for accion, _estado in self._io_action_states:
+                accion.setEnabled(False)
+        else:
+            for accion, estado in getattr(self, "_io_action_states", ()):
+                try:
+                    accion.setEnabled(estado)
+                except RuntimeError:
+                    pass
+            self._io_action_states = []
+
+        # La barra es compartida con IA. No se pisan dos indicadores: si una IA
+        # ya la posee, el guardado sigue funcionando y usa solo el mensaje.
+        bar = getattr(self, "ai_progress_bar", None)
+        btn = getattr(self, "ai_cancel_btn", None)
+        mostrar = bool(busy and not getattr(self, "_ai_busy", False))
+        if bar is not None and (mostrar or not getattr(self, "_ai_busy", False)):
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setVisible(mostrar)
+        if btn is not None and (mostrar or not getattr(self, "_ai_busy", False)):
+            btn.setVisible(mostrar)
+            if mostrar:
+                btn.setToolTip(t("io.cancel.tip"))
+            elif not getattr(self, "_ai_busy", False):
+                btn.setToolTip(t("ai.cancel.tip", default="Cancelar la operación de IA en curso"))
+        if busy and mensaje and hasattr(self, "status_bar"):
+            self.status_bar.showMessage(mensaje)
+
+    def _io_progress(self, porcentaje):
+        if getattr(self, "_ai_busy", False):
+            return
+        bar = getattr(self, "ai_progress_bar", None)
+        if bar is not None:
+            bar.setValue(max(0, min(100, int(porcentaje))))
+
+    def _io_cancel_current(self):
+        """Cancela el trabajo visible y libera su bucle Qt anidado."""
+        handle = getattr(self, "_io_handle", None)
+        if handle is None:
+            return
+        handle.cancel()
+        self._io_handle = None
+        self._io_cancelado = True
+        bucle = getattr(self, "_io_event_loop", None)
+        if bucle is not None:
+            bucle.quit()
+
+    def _ejecutar_trabajo_io(self, trabajo, mensaje):
+        """Ejecuta ``trabajo(report, token)`` fuera del GUI y espera sin congelar.
+
+        Devuelve ``(completado, resultado)``. En dobles de prueba que no son
+        QObject conserva un camino directo para no exigir un QApplication.
+        """
+        from PySide6.QtCore import QObject, QEventLoop
+        from PySide6.QtWidgets import QApplication
+        from ai.runner import CancelToken, InferenceRunner
+
+        if QApplication.instance() is None or not isinstance(self, QObject):
+            token = CancelToken()
+            try:
+                self._io_error_message = None
+                return True, trabajo(lambda _pct: None, token)
+            except Exception as exc:
+                self._io_error_message = str(exc)
+                return False, None
+        if getattr(self, "_io_handle", None) is not None:
+            return False, None
+
+        if getattr(self, "_io_runner", None) is None:
+            self._io_runner = InferenceRunner(self)
+        estado = {"completado": False, "resultado": None, "error": None}
+        bucle = QEventLoop(self)
+        self._io_event_loop = bucle
+        self._io_cancelado = False
+
+        def terminado(resultado):
+            estado["completado"] = True
+            estado["resultado"] = resultado
+            self._io_handle = None
+            bucle.quit()
+
+        def error(mensaje_error):
+            estado["error"] = mensaje_error
+            self._io_handle = None
+            bucle.quit()
+
+        self._io_set_busy(True, mensaje)
+        self._io_handle = self._io_runner.submit(
+            trabajo, on_done=terminado, on_error=error,
+            on_progress=self._io_progress)
+        bucle.exec()
+        cancelado = self._io_cancelado
+        self._io_error_message = estado["error"]
+        self._io_event_loop = None
+        self._io_set_busy(False)
+        if cancelado and hasattr(self, "status_bar"):
+            self.status_bar.showMessage(t("status.io.cancelled"), 3000)
+        return estado["completado"] and not cancelado, estado["resultado"]
+
     def new_file(self):
         # El tamaño del portapapeles ya NO se vuelca aquí: lo gobierna la casilla
         # 'Tamaño del portapapeles' del propio diálogo (desactivada por defecto).
@@ -121,9 +243,11 @@ class AccionesMenuArchivo:
         from models.project_io import load_project
         restored = 0
         for e in entries:
-            try:
-                data = load_project(e["path"])
-            except ValueError:
+            completado, data = AccionesMenuArchivo._ejecutar_trabajo_io(
+                self, lambda report, token, ruta=e["path"]: load_project(
+                    ruta, report=report, token=token),
+                t("status.io.loading"))
+            if not completado:
                 continue
             title = e.get("title") or t("msg.recovered_default")
             canvas = self.create_new_tab_canvas(data["width"], data["height"], title)
@@ -182,10 +306,16 @@ class AccionesMenuArchivo:
         # PROYECTO IMAGO: restaurar todas las capas
         if file_path.lower().endswith(".imago"):
             from models.project_io import load_project
-            try:
-                data = load_project(file_path)
-            except ValueError as e:
-                imago_critical(self, t("msg.error.open_proj"), str(e))
+            completado, data = AccionesMenuArchivo._ejecutar_trabajo_io(
+                self, lambda report, token: load_project(
+                    file_path, report=report, token=token),
+                t("status.io.loading"))
+            if not completado:
+                if not getattr(self, "_io_cancelado", False):
+                    imago_critical(
+                        self, t("msg.error.open_proj"),
+                        getattr(self, "_io_error_message", None)
+                        or t("msg.error.open_proj"))
                 return
             canvas = self.create_new_tab_canvas(data["width"], data["height"],
                                                 os.path.basename(file_path))
@@ -215,7 +345,23 @@ class AccionesMenuArchivo:
                 return
 
         # IMAGEN PLANA: se carga (con su rotación EXIF) y queda asociada al archivo
-        loaded_image = cargar_imagen_orientada(file_path)
+        def cargar_plana(report, token):
+            report(10)
+            imagen = cargar_imagen_orientada(file_path)
+            if token.cancelled:
+                return QImage(), None
+            exif = None
+            if not imagen.isNull():
+                from exif_utils import leer_exif
+                exif = leer_exif(file_path)
+            report(100)
+            return imagen, exif
+
+        completado, carga = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self, cargar_plana, t("status.io.loading"))
+        if not completado:
+            return
+        loaded_image, source_exif = carga
         if not loaded_image.isNull():
             converted_image = loaded_image.convertToFormat(QImage.Format_ARGB32_Premultiplied)
             canvas = self.create_new_tab_canvas(loaded_image.width(), loaded_image.height(),
@@ -229,8 +375,7 @@ class AccionesMenuArchivo:
             canvas.project_path = None
             # EXIF de origen (fecha, cámara, GPS...): se guarda para reincrustarlo
             # tal cual al reescribir un JPEG, sin recomprimir (ver exif_utils.py).
-            from exif_utils import leer_exif
-            canvas.source_exif = leer_exif(file_path)
+            canvas.source_exif = source_exif
             canvas.image_quality = self._default_quality(
                 os.path.splitext(file_path)[1].lstrip("."))
             canvas.undo_stack.setClean()
@@ -260,13 +405,18 @@ class AccionesMenuArchivo:
         except ImportError:
             imago_warning(self, t("msg.psd.title"), t("msg.psd.missing_dep"))
             return
-        try:
-            data = load_psd(file_path)
-        except ImportError:
-            imago_warning(self, t("msg.psd.title"), t("msg.psd.missing_dep"))
-            return
-        except ValueError as e:
-            imago_critical(self, t("msg.psd.title"), str(e))
+        completado, data = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self, lambda report, token: load_psd(
+                file_path, report=report, token=token),
+            t("status.io.loading"))
+        if not completado:
+            if getattr(self, "_io_cancelado", False):
+                return
+            mensaje = getattr(self, "_io_error_message", "") or ""
+            if "psd_tools" in mensaje:
+                imago_warning(self, t("msg.psd.title"), t("msg.psd.missing_dep"))
+            else:
+                imago_critical(self, t("msg.psd.title"), mensaje)
             return
 
         canvas = self.create_new_tab_canvas(data["width"], data["height"],
@@ -306,12 +456,20 @@ class AccionesMenuArchivo:
             imago_warning(self, t("msg.open.title"),
                           t("msg.error.open_img", file_path=file_path))
             return
-        renderer = QSvgRenderer(file_path)
-        if not renderer.isValid():
+        def inspeccionar_svg(report, token):
+            renderer = QSvgRenderer(file_path)
+            report(100)
+            return renderer.isValid(), renderer.defaultSize()
+
+        completado, inspeccion = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self, inspeccionar_svg, t("status.io.loading"))
+        if not completado:
+            return
+        valido, base = inspeccion
+        if not valido:
             imago_warning(self, t("msg.open.title"),
                           t("msg.error.open_img", file_path=file_path))
             return
-        base = renderer.defaultSize()
         w = base.width() if base.width() > 0 else 512
         h = base.height() if base.height() > 0 else 512
 
@@ -321,13 +479,24 @@ class AccionesMenuArchivo:
             return
         w, h = dlg.get_values()
 
-        image = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
-        image.fill(Qt.transparent)
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        renderer.render(painter)   # escala al viewport completo del painter
-        painter.end()
+        def rasterizar(report, token):
+            if token.cancelled:
+                return QImage()
+            render_worker = QSvgRenderer(file_path)
+            image = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+            image.fill(Qt.transparent)
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            render_worker.render(painter)
+            painter.end()
+            report(100)
+            return image if not token.cancelled else QImage()
+
+        completado, image = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self, rasterizar, t("status.io.loading"))
+        if not completado or image.isNull():
+            return
 
         canvas = self.create_new_tab_canvas(w, h, os.path.basename(file_path), image)
         canvas.image_path = None
@@ -358,9 +527,16 @@ class AccionesMenuArchivo:
         debe machacar la animación original con una imagen plana)."""
         from PySide6.QtGui import QImageReader
         from PySide6.QtWidgets import QMessageBox
-        reader = QImageReader(file_path)
-        reader.setAutoTransform(True)
-        n = reader.imageCount()
+        def contar_fotogramas(report, token):
+            lector = QImageReader(file_path)
+            lector.setAutoTransform(True)
+            report(100)
+            return lector.imageCount()
+
+        completado, n = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self, contar_fotogramas, t("status.io.loading"))
+        if not completado:
+            return False
         if n <= 1:
             return False
         resp = imago_question(
@@ -370,28 +546,43 @@ class AccionesMenuArchivo:
         if resp != QMessageBox.Yes:
             return False
 
-        from models.layer import Layer
         truncado = n > self.MAX_FOTOGRAMAS
-        n = min(n, self.MAX_FOTOGRAMAS)
+        limite = min(n, self.MAX_FOTOGRAMAS)
+
+        def decodificar(report, token):
+            lector = QImageReader(file_path)
+            lector.setAutoTransform(True)
+            fotogramas = []
+            for indice in range(limite):
+                if token.cancelled:
+                    return None
+                imagen = lector.read()
+                if imagen.isNull():
+                    break
+                fotogramas.append((
+                    imagen.convertToFormat(QImage.Format_ARGB32),
+                    max(0, int(lector.nextImageDelay()))))
+                report(int(100 * (indice + 1) / limite))
+            return fotogramas
+
+        completado, fotogramas = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self, decodificar, t("status.io.loading"))
+        if not completado or not fotogramas:
+            return False
+
+        from models.layer import Layer
         layers = []
-        W = H = None
-        for i in range(n):
-            img = reader.read()   # el lector avanza al siguiente fotograma solo
-            if img.isNull():
-                break
-            delay = reader.nextImageDelay()
-            img = img.convertToFormat(QImage.Format_ARGB32)
-            if W is None:
-                W, H = img.width(), img.height()
+        W, H = fotogramas[0][0].width(), fotogramas[0][0].height()
+        for i, (img, delay) in enumerate(fotogramas):
             layer = Layer(W, H, name=t("layer.frame", i=i + 1))
             if img.width() == W and img.height() == H:
                 layer.image = img
             else:
-                # Fotograma de otro tamaño (raro): se pinta sobre el lienzo
+                # Fotograma de otro tamaño (raro): se pinta sobre el lienzo.
                 painter = QPainter(layer.image)
                 painter.drawImage(0, 0, img)
                 painter.end()
-            layer.frame_delay = max(0, int(delay))
+            layer.frame_delay = delay
             layers.append(layer)
         if len(layers) < 2 or W is None:
             return False
@@ -603,7 +794,9 @@ class AccionesMenuArchivo:
         image = canvas.render_flat_image(background=Qt.white)
         dpi = float(getattr(canvas, 'dpi', 96.0)) or 96.0
 
-        def _escribir_pdf(ruta_temporal):
+        def _escribir_pdf(ruta_temporal, token):
+            if token.cancelled:
+                return False
             writer = QPdfWriter(ruta_temporal)
             writer.setTitle(os.path.splitext(doc_name)[0])
             writer.setResolution(int(round(dpi)))
@@ -627,9 +820,21 @@ class AccionesMenuArchivo:
             # QPdfWriter debe liberar su descriptor antes del os.replace en Windows.
             del painter
             del writer
-            return True
+            return not token.cancelled
 
-        if not escribir_atomico(ruta_pdf, _escribir_pdf):
+        def trabajo(report, token):
+            report(10)
+            ok = escribir_atomico(
+                ruta_pdf, lambda ruta: _escribir_pdf(ruta, token))
+            report(100)
+            return ok
+
+        completado, ok = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self,
+            trabajo, t("status.io.exporting"))
+        if not completado:
+            return
+        if not ok:
             imago_critical(self, t("msg.error.title"), t("msg.error.print"))
             return
         self.status_bar.showMessage(
@@ -642,7 +847,7 @@ class AccionesMenuArchivo:
         canvas = self.get_current_canvas()
         if not canvas:
             return
-        from models.project_io import save_ora
+        from models.project_io import crear_instantanea_ora, save_ora
         doc_name = self.tabs.tabText(self.tabs.currentIndex()) or "Imago"
         base = os.path.splitext(doc_name)[0] + ".ora"
         start = os.path.join(self.last_opened_dir or "", base)
@@ -652,7 +857,15 @@ class AccionesMenuArchivo:
             return
         if not ruta.lower().endswith(".ora"):
             ruta += ".ora"
-        if save_ora(canvas, ruta):
+        instantanea = crear_instantanea_ora(canvas)
+        completado, ok = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self,
+            lambda report, token: save_ora(
+                instantanea, ruta, report=report, token=token),
+            t("status.io.exporting"))
+        if not completado:
+            return
+        if ok:
             self.last_opened_dir = os.path.dirname(ruta)
             self.settings.setValue("last_opened_dir", self.last_opened_dir)
             self.status_bar.showMessage(
@@ -712,9 +925,17 @@ class AccionesMenuArchivo:
         if not ruta.lower().endswith((".gif", ".webp")):
             ruta += ".webp" if "webp" in (sel or "").lower() else ".gif"
 
-        from models.anim_io import save_animation
-        ok, err = save_animation(canvas, ruta, ms, loop=bucle,
-                                 use_original=usar_orig)
+        from models.anim_io import frames_de_capas, save_animation_frames
+        frames, delays_capturados = frames_de_capas(canvas)
+        completado, resultado = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self,
+            lambda report, token: save_animation_frames(
+                frames, delays_capturados, ruta, ms, loop=bucle,
+                use_original=usar_orig, report=report, token=token),
+            t("status.io.exporting"))
+        if not completado:
+            return
+        ok, err = resultado
         if ok:
             self.last_opened_dir = os.path.dirname(ruta)
             self.settings.setValue("last_opened_dir", self.last_opened_dir)
@@ -726,17 +947,32 @@ class AccionesMenuArchivo:
 
     def _save_project(self, canvas, file_path):
         """Escribe el .imago, actualiza el estado y devuelve ResultadoGuardado."""
-        from models.project_io import save_project
+        from models.project_io import crear_instantanea_proyecto, save_project
 
         self.last_opened_dir = os.path.dirname(file_path)
         self.settings.setValue("last_opened_dir", self.last_opened_dir)
 
-        if save_project(canvas, file_path):
+        revision = getattr(canvas, "revision_autoguardado", None)
+        instantanea = crear_instantanea_proyecto(canvas)
+        completado, ok = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self,
+            lambda report, token: save_project(
+                instantanea, file_path, report=report, token=token),
+            t("status.io.saving"))
+        if not completado:
+            return (ResultadoGuardado.CANCELADO if getattr(self, "_io_cancelado", False)
+                    else ResultadoGuardado.ERROR)
+        if ok:
             canvas.project_path = file_path  # asociamos el .imago al lienzo
             canvas.image_path = None         # ya no esta ligado a una imagen plana
-            canvas.undo_stack.setClean()
-            canvas.recovered_dirty = False   # ya guardado de verdad
-            self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(file_path))
+            # Si el usuario editó durante la compresión, el archivo es válido
+            # pero corresponde a la instantánea: el estado nuevo sigue pendiente.
+            if getattr(canvas, "revision_autoguardado", None) == revision:
+                canvas.undo_stack.setClean()
+                canvas.recovered_dirty = False
+            indice = AccionesMenuArchivo._tab_index_for_canvas(self, canvas)
+            if indice >= 0:
+                self.tabs.setTabText(indice, os.path.basename(file_path))
             self._update_window_title()
             self._add_recent(file_path)
             self.status_bar.showMessage(t("status.saved_proj", name=os.path.basename(file_path)), 4000)
@@ -768,60 +1004,78 @@ class AccionesMenuArchivo:
         self.settings.setValue("last_opened_dir", self.last_opened_dir)
         img = final_image
         q = settings.get("quality", -1)
-        datos_png8 = None
-        if settings.get("indexed8"):
-            # PNG INDEXADO de verdad: paleta cuantizada con Pillow (alfa
-            # incluido y difuminado opcional; ver png8_bytes en utilidades.py),
-            # en vez del Indexed8 de Qt, que con >256 colores tramaba a una
-            # paleta fija con mala calidad. Si Pillow fallara, se cae al
-            # camino clásico de Qt (como hasta jul 2026).
-            from utilidades import png8_bytes
-            dpi_v = float(getattr(canvas, 'dpi', 96.0))
-            nivel = 6 if q is None or q < 0 else round(q * 9 / 100)
-            datos_png8 = png8_bytes(final_image, settings.get("colors", 256),
-                                    settings.get("dither", False), nivel,
-                                    dpi=(dpi_v, dpi_v))
-            if datos_png8 is None:
-                img = img.convertToFormat(QImage.Format_Indexed8)
+        dpi_v = float(getattr(canvas, 'dpi', 96.0))
         # Resolución de impresión (PPP) como metadato del archivo (pHYs en PNG,
         # densidad en JPEG...). dpm = puntos por metro = PPP / 0.0254.
-        dpm = int(round(float(getattr(canvas, 'dpi', 96.0)) / 0.0254))
+        dpm = int(round(dpi_v / 0.0254))
         img.setDotsPerMeterX(dpm)
         img.setDotsPerMeterY(dpm)
-        def _escribir_imagen(ruta_temporal):
-            if datos_png8 is not None:
-                # Los bytes ya vienen listos de Pillow: se escriben tal cual.
-                with open(ruta_temporal, "wb") as fh:
-                    fh.write(datos_png8)
-                escrito_temporal = True
-            else:
-                writer = QImageWriter(ruta_temporal)
-                if q is not None and q >= 0:
-                    writer.setQuality(q)
-                if settings.get("optimized") and hasattr(writer, "setOptimizedWrite"):
-                    writer.setOptimizedWrite(True)
-                if settings.get("progressive") and hasattr(writer, "setProgressiveScanWrite"):
-                    writer.setProgressiveScanWrite(True)
-                escrito_temporal = writer.write(img)
+        conservar_exif = self.settings.value("save/keep_exif", True, type=bool)
+        conservar_gps = self.settings.value("save/keep_gps", True, type=bool)
+        source_exif = getattr(canvas, 'source_exif', None)
+        revision = getattr(canvas, "revision_autoguardado", None)
 
-            # El EXIF se modifica todavía sobre el temporal: incluso si esa
-            # reescritura falla, el JPEG definitivo anterior queda intacto.
-            if (escrito_temporal and ext in ("jpg", "jpeg")
-                    and self.settings.value("save/keep_exif", True, type=bool)):
-                from exif_utils import incrustar_exif_jpeg
-                incrustar_exif_jpeg(
-                    ruta_temporal, getattr(canvas, 'source_exif', None),
-                    incluir_gps=self.settings.value("save/keep_gps", True, type=bool))
-            return escrito_temporal
+        def trabajo(report, token):
+            imagen = QImage(img)
+            datos_png8 = None
+            if settings.get("indexed8"):
+                # La cuantización Pillow es una de las fases pesadas y se hace
+                # íntegramente aquí, nunca en el hilo GUI.
+                from utilidades import png8_bytes
+                nivel = 6 if q is None or q < 0 else round(q * 9 / 100)
+                datos_png8 = png8_bytes(
+                    imagen, settings.get("colors", 256),
+                    settings.get("dither", False), nivel, dpi=(dpi_v, dpi_v))
+                if datos_png8 is None:
+                    imagen = imagen.convertToFormat(QImage.Format_Indexed8)
+            if token.cancelled:
+                return False
+            report(35)
 
-        escrito = escribir_atomico(file_path, _escribir_imagen)
+            def _escribir_imagen(ruta_temporal):
+                if token.cancelled:
+                    return False
+                if datos_png8 is not None:
+                    with open(ruta_temporal, "wb") as fh:
+                        fh.write(datos_png8)
+                    escrito_temporal = True
+                else:
+                    writer = QImageWriter(ruta_temporal)
+                    if q is not None and q >= 0:
+                        writer.setQuality(q)
+                    if settings.get("optimized") and hasattr(writer, "setOptimizedWrite"):
+                        writer.setOptimizedWrite(True)
+                    if settings.get("progressive") and hasattr(writer, "setProgressiveScanWrite"):
+                        writer.setProgressiveScanWrite(True)
+                    escrito_temporal = writer.write(imagen)
+
+                if (escrito_temporal and ext in ("jpg", "jpeg")
+                        and conservar_exif and not token.cancelled):
+                    from exif_utils import incrustar_exif_jpeg
+                    incrustar_exif_jpeg(
+                        ruta_temporal, source_exif, incluir_gps=conservar_gps)
+                return escrito_temporal and not token.cancelled
+
+            ok = escribir_atomico(file_path, _escribir_imagen)
+            report(100)
+            return ok
+
+        completado, escrito = AccionesMenuArchivo._ejecutar_trabajo_io(
+            self,
+            trabajo, t("status.io.saving"))
+        if not completado:
+            return (ResultadoGuardado.CANCELADO if getattr(self, "_io_cancelado", False)
+                    else ResultadoGuardado.ERROR)
         if escrito:
             canvas.image_path = file_path
             canvas.project_path = None
             canvas.image_quality = settings.get("quality", -1)
-            canvas.undo_stack.setClean()
-            canvas.recovered_dirty = False   # ya guardado de verdad
-            self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(file_path))
+            if getattr(canvas, "revision_autoguardado", None) == revision:
+                canvas.undo_stack.setClean()
+                canvas.recovered_dirty = False
+            indice = AccionesMenuArchivo._tab_index_for_canvas(self, canvas)
+            if indice >= 0:
+                self.tabs.setTabText(indice, os.path.basename(file_path))
             self._update_window_title()
             self._add_recent(file_path)
             self.status_bar.showMessage(t("status.saved_img", name=os.path.basename(file_path)), 4000)
