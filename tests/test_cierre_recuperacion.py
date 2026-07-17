@@ -2,6 +2,7 @@
 
 import os
 import unittest
+import warnings
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -30,6 +31,7 @@ from models.document_state import documento_pendiente
 from ventana.menu_archivo import AccionesMenuArchivo, ResultadoGuardado
 from widgets.history_panel import HistoryPanel
 from widgets.layers_panel import LayersPanel
+from widgets.canvas import Canvas
 
 
 class _SignalFalsa:
@@ -361,8 +363,27 @@ class LiberacionWidgetsPestanaTests(unittest.TestCase):
         panel_capas._thumb_rows = [(object(),)]
         panel_capas._refresh_thumbnails()
         self.assertTrue(panel_historial._detached)
+        self.assertEqual(panel_historial._refresh_timer.detenciones, 1)
+        self.assertEqual(
+            canvas.undo_stack.indexChanged.desconexiones, 1)
+        self.assertEqual(
+            panel_historial.list_view.modelo_seleccion.currentChanged.desconexiones,
+            1)
         self.assertIsNone(reglas.canvas)
         self.assertIsNone(marker.canvas)
+
+    def test_desacoplar_dos_veces_un_historial_real_no_avisa(self):
+        canvas = Canvas(4, 3)
+        panel = HistoryPanel(canvas)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            panel.detach()
+            panel.detach()
+        self.assertTrue(panel._detached)
+        self.assertIsNone(panel.canvas)
+        self.assertIsNone(panel.undo_stack)
+        panel.deleteLater()
+        canvas.deleteLater()
 
 
 class CierreAplicacionTests(unittest.TestCase):

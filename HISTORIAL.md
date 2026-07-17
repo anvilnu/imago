@@ -594,8 +594,11 @@ Photopea (julio 2026). Ir marcando `[x]` según se implementen.
   y `HistoryPanel.detach()` es idempotente y libera sus referencias. Así, al
   abrir otra pestaña tras cerrar la última, una segunda desconexión no interrumpe
   `on_tab_changed()` antes de volver a enlazar las reglas (el fallo dejaba solo
-  sus bandas vacías). Cubierto por una regresión adicional; suite completa:
-  61 pruebas en Windows, 3 POSIX omitidas condicionalmente.
+  sus bandas vacías). Las llamadas repetidas salen ahora antes de volver a
+  desconectar señales Qt, evitando también el `RuntimeWarning` de libpyside en
+  la terminal. Cubierto por regresiones con paneles simulados y un
+  `HistoryPanel` Qt real que trata el aviso como error; suite actual:
+  66 pruebas en Windows, 3 POSIX omitidas condicionalmente.
 - [x] **Contrato seguro y versionado para proyectos `.imago`** — HECHO
   (17-07-2026). El cargador valida completamente el manifiesto v1 antes de
   reservar imágenes: versión, esquema, tipos, dimensiones, memoria estimada,

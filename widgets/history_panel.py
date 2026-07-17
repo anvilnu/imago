@@ -157,6 +157,8 @@ class HistoryPanel(QWidget):
         y CANCELA cualquier refresco diferido pendiente (si no, podía dispararse
         sobre el panel ya borrado). Es idempotente y libera las referencias al
         documento para que cerrar la última pestaña no lo mantenga vivo."""
+        if self._detached:
+            return
         self._detached = True
         try:
             self._refresh_timer.stop()
