@@ -590,6 +590,12 @@ Photopea (julio 2026). Ir marcando `[x]` según se implementen.
   Dos regresiones con widgets Qt reales fuerzan `DeferredDelete` y comprueban
   tanto la destrucción completa como la conservación de la pestaña nueva. Suite
   completa: 49 pruebas en Windows; 3 casos POSIX omitidos condicionalmente.
+  Corrección posterior: Capas desacopla ahora su callback, filas y miniaturas,
+  y `HistoryPanel.detach()` es idempotente y libera sus referencias. Así, al
+  abrir otra pestaña tras cerrar la última, una segunda desconexión no interrumpe
+  `on_tab_changed()` antes de volver a enlazar las reglas (el fallo dejaba solo
+  sus bandas vacías). Cubierto por una regresión adicional; suite completa:
+  61 pruebas en Windows, 3 POSIX omitidas condicionalmente.
 - [x] **Contrato seguro y versionado para proyectos `.imago`** — HECHO
   (17-07-2026). El cargador valida completamente el manifiesto v1 antes de
   reservar imágenes: versión, esquema, tipos, dimensiones, memoria estimada,

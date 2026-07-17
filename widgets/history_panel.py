@@ -155,20 +155,25 @@ class HistoryPanel(QWidget):
         """Desconecta este panel del undo_stack antes de ser reemplazado.
         Evita que paneles 'fantasma' sigan escuchando señales de stacks antiguos
         y CANCELA cualquier refresco diferido pendiente (si no, podía dispararse
-        sobre el panel ya borrado)."""
+        sobre el panel ya borrado). Es idempotente y libera las referencias al
+        documento para que cerrar la última pestaña no lo mantenga vivo."""
         self._detached = True
         try:
             self._refresh_timer.stop()
         except (RuntimeError, AttributeError):
             pass
-        try:
-            self.undo_stack.indexChanged.disconnect(self._programar_refresco)
-        except (RuntimeError, TypeError):
-            pass  # Ya estaba desconectado o el stack fue destruido
+        undo_stack = getattr(self, "undo_stack", None)
+        if undo_stack is not None:
+            try:
+                undo_stack.indexChanged.disconnect(self._programar_refresco)
+            except (RuntimeError, TypeError, AttributeError):
+                pass  # Ya estaba desconectado o el stack fue destruido
         try:
             self.list_view.selectionModel().currentChanged.disconnect(self._on_current_changed)
-        except (RuntimeError, TypeError):
+        except (RuntimeError, TypeError, AttributeError):
             pass
+        self.canvas = None
+        self.undo_stack = None
 
     def _programar_refresco(self, *args):
         """Pospone (coalescido) la reconstrucción de la lista al siguiente ciclo

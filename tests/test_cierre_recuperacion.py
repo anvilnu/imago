@@ -28,11 +28,16 @@ with patch("builtins.open", side_effect=_open_sin_log_imago):
 
 from models.document_state import documento_pendiente
 from ventana.menu_archivo import AccionesMenuArchivo, ResultadoGuardado
+from widgets.history_panel import HistoryPanel
+from widgets.layers_panel import LayersPanel
 
 
 class _SignalFalsa:
-    def disconnect(self):
-        pass
+    def __init__(self):
+        self.desconexiones = 0
+
+    def disconnect(self, *args):
+        self.desconexiones += 1
 
 
 class _PilaFalsa:
@@ -101,6 +106,83 @@ class _EventoFalso:
 
     def ignore(self):
         self.ignorado = True
+
+
+class _TemporizadorFalso:
+    def __init__(self):
+        self.detenciones = 0
+
+    def stop(self):
+        self.detenciones += 1
+
+
+class _ModeloSeleccionFalso:
+    def __init__(self):
+        self.currentChanged = _SignalFalsa()
+
+
+class _VistaHistorialFalsa:
+    def __init__(self):
+        self.modelo_seleccion = _ModeloSeleccionFalso()
+
+    def selectionModel(self):
+        return self.modelo_seleccion
+
+
+class _PanelHistorialFalso:
+    detach = HistoryPanel.detach
+
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.undo_stack = canvas.undo_stack
+        self._detached = False
+        self._refresh_timer = _TemporizadorFalso()
+        self.list_view = _VistaHistorialFalsa()
+
+    def _programar_refresco(self, *args):
+        pass
+
+    def _on_current_changed(self, *args):
+        pass
+
+
+class _ListaCapasFalsa:
+    def __init__(self):
+        self.bloqueos = []
+        self.limpiezas = 0
+
+    def blockSignals(self, bloqueado):
+        self.bloqueos.append(bloqueado)
+
+    def clear(self):
+        self.limpiezas += 1
+
+
+class _PanelCapasFalso:
+    detach_canvas = LayersPanel.detach_canvas
+    _refresh_thumbnails = LayersPanel._refresh_thumbnails
+
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self._thumb_rows = [(object(), object(), object(), None)]
+        self.list_widget = _ListaCapasFalsa()
+
+    def _schedule_update(self):
+        pass
+
+    def isVisible(self):
+        return True
+
+
+class _ReglasFalsas:
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.modo_vacio = False
+
+    def set_empty_mode(self, vacio):
+        self.modo_vacio = vacio
+        if vacio:
+            self.canvas = None
 
 
 class _VentanaFalsa:
@@ -250,6 +332,37 @@ class LiberacionWidgetsPestanaTests(unittest.TestCase):
 
         self.assertTrue(all(not isValid(objeto) for objeto in inicial))
         self.assertTrue(all(isValid(objeto) for objeto in destino))
+
+    def test_ultima_pestana_desacopla_paneles_sin_romper_la_reapertura(self):
+        marker, _scroll_area, canvas, _close_btn = self._anadir_pestana()
+        panel_capas = _PanelCapasFalso(canvas)
+        canvas.layers_changed_callback = panel_capas._schedule_update
+        panel_historial = _PanelHistorialFalso(canvas)
+        reglas = _ReglasFalsas(canvas)
+        self.ventana.layers_panel = panel_capas
+        self.ventana.history_view = panel_historial
+        self.ventana.ruler_overlay = reglas
+
+        self.assertTrue(MainWindow._retirar_y_destruir_pestana(
+            self.ventana, 0))
+
+        self.assertIsNone(panel_capas.canvas)
+        self.assertEqual(panel_capas._thumb_rows, [])
+        self.assertEqual(panel_capas.list_widget.limpiezas, 1)
+        self.assertEqual(panel_capas.list_widget.bloqueos, [True, False])
+        self.assertIsNone(panel_historial.canvas)
+        self.assertIsNone(panel_historial.undo_stack)
+        self.assertTrue(reglas.modo_vacio)
+
+        # Al abrir otra pestaña, on_tab_changed() vuelve a desacoplar el panel
+        # de historial anterior. La segunda llamada debe ser inocua y el timer
+        # de miniaturas tampoco puede consultar un canvas inexistente.
+        panel_historial.detach()
+        panel_capas._thumb_rows = [(object(),)]
+        panel_capas._refresh_thumbnails()
+        self.assertTrue(panel_historial._detached)
+        self.assertIsNone(reglas.canvas)
+        self.assertIsNone(marker.canvas)
 
 
 class CierreAplicacionTests(unittest.TestCase):

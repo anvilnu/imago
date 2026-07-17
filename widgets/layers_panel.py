@@ -383,6 +383,26 @@ class LayersPanel(QWidget):
         # Sincronizar con el estado inicial
         self.update_layer_list()
 
+    def detach_canvas(self):
+        """Desconecta el panel del documento actual y libera sus capas.
+
+        Puede llamarse varias veces: el panel persiste cuando se cierra la
+        última pestaña y se reutiliza al abrir el siguiente documento.
+        """
+        canvas = getattr(self, "canvas", None)
+        if (canvas is not None
+                and getattr(canvas, "layers_changed_callback", None)
+                == self._schedule_update):
+            canvas.layers_changed_callback = None
+        self.canvas = None
+        self._thumb_rows = []
+        try:
+            self.list_widget.blockSignals(True)
+            self.list_widget.clear()
+            self.list_widget.blockSignals(False)
+        except RuntimeError:
+            pass  # El panel puede estar destruyéndose junto con la ventana
+
     def _frame_thumb(self, p, w, h, highlight):
         """Dibuja el marco de la miniatura: azul de 2 px si es el destino de
         edición activo, gris de 1 px en caso contrario."""
@@ -435,7 +455,7 @@ class LayersPanel(QWidget):
 
     def _refresh_thumbnails(self):
         """Re-renderiza las miniaturas de las filas visibles (refresco en vivo)."""
-        if not self.isVisible():
+        if not self.isVisible() or self.canvas is None:
             return
         for idx, layer, lbl, mask_lbl in self._thumb_rows:
             # 📁 El índice real viaja con la fila (con cabeceras de grupo y

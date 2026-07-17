@@ -1107,14 +1107,18 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         # paneles por los de otro documento: retirar sus referencias expresamente.
         layers_panel = getattr(self, "layers_panel", None)
         if layers_panel is not None and getattr(layers_panel, "canvas", None) is canvas:
-            layers_panel.canvas = None
+            if hasattr(layers_panel, "detach_canvas"):
+                layers_panel.detach_canvas()
+            else:
+                layers_panel.canvas = None
 
         history_view = getattr(self, "history_view", None)
         if history_view is not None and getattr(history_view, "canvas", None) is canvas:
             if hasattr(history_view, "detach"):
                 history_view.detach()
-            history_view.canvas = None
-            history_view.undo_stack = None
+            else:
+                history_view.canvas = None
+                history_view.undo_stack = None
 
         ruler_overlay = getattr(self, "ruler_overlay", None)
         if ruler_overlay is not None and getattr(ruler_overlay, "canvas", None) is canvas:
