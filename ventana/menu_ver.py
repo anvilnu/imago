@@ -469,32 +469,32 @@ class AccionesMenuVer:
             self._sync_zoom_slider()
             self._update_fit_button_state()
 
-    # AÑADIDO: Pegar este método completo aquí abajo
-    def update_tab_tooltips(self):
-        """Genera una vista previa visual en miniatura para el ToolTip de cada pestaña"""
-        for i in range(self.tabs.count()):
-            marker = self.tabs.widget(i)
-            if marker and hasattr(marker, 'canvas'):
-                canvas = marker.canvas
-                
-                # 1. Componemos la imagen a tamaño base (NO canvas.grab(): a
-                #    zoom alto el widget es enorme y la captura colgaría la app)
-                thumb = _canvas_thumb_pixmap(canvas, 150, 110)
-                if thumb is None:
-                    continue
-                preview_img = thumb.toImage()
-                
-                # 3. Conversión segura a Base64 para inyección HTML sin archivos temporales
-                from PySide6.QtCore import QByteArray, QBuffer, QIODevice
-                ba = QByteArray()
-                buffer = QBuffer(ba)
-                buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-                preview_img.save(buffer, "PNG")
-                b64_data = ba.toBase64().data().decode("utf-8")
-                
-                # 4. Diseño del contenedor CSS del tooltip
-                nombre_archivo = self.tabs.tabText(i)
-                html_tooltip = f"""
+    def update_tab_tooltip(self, index, thumb=None):
+        """Actualiza un tooltip reutilizando la caché reducida de su pestaña."""
+        if not 0 <= index < self.tabs.count():
+            return
+        marker = self.tabs.widget(index)
+        if marker is None or not hasattr(marker, 'canvas'):
+            return
+        canvas = marker.canvas
+        if thumb is None and hasattr(self, "thumbnail_bar"):
+            thumb = self.thumbnail_bar.preview_for_canvas(canvas)
+        if thumb is None:
+            # Respaldo para llamadas anteriores a la construcción de la barra.
+            thumb = _canvas_thumb_pixmap(canvas, 150, 110)
+        if thumb is None:
+            return
+        preview_img = thumb.toImage()
+
+        from PySide6.QtCore import QByteArray, QBuffer, QIODevice
+        ba = QByteArray()
+        buffer = QBuffer(ba)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        preview_img.save(buffer, "PNG")
+        b64_data = ba.toBase64().data().decode("utf-8")
+
+        nombre_archivo = self.tabs.tabText(index)
+        html_tooltip = f"""
                 <div style='background-color: {theme.BG_WINDOW}; color: {theme.TEXT}; padding: 6px; border: 1px solid {theme.BORDER_SOFT}; border-radius: 4px;'>
                     <b style='font-size: 11px; color: {theme.ACCENT};'>{nombre_archivo}</b><br/>
                     <div style='margin-top: 4px; border-top: 1px solid {theme.BORDER_SOFT}; padding-top: 4px;'>
@@ -502,5 +502,10 @@ class AccionesMenuVer:
                     </div>
                 </div>
                 """
-                self.tabs.setTabToolTip(i, html_tooltip)
+        self.tabs.setTabToolTip(index, html_tooltip)
+
+    def update_tab_tooltips(self):
+        """Sincroniza los tooltips sin volver a componer los documentos."""
+        for i in range(self.tabs.count()):
+            self.update_tab_tooltip(i)
 

@@ -247,7 +247,8 @@ widgets/
   opciones_seleccion.py PanelesSeleccion: mover (con refinar), marquesinas,
                         mover selección/copia, mano, recorte y varita.
   tab_thumbnails.py     TabThumbnailBar (+_ThumbButton/_ThumbStrip): barra de
-                        miniaturas de pestañas, extraída de main.py.
+                        miniaturas de pestañas, dirigida por la huella visual
+                        del canvas y con caché reducida compartida con tooltips.
   canvas_scroll.py      CanvasScrollArea + CanvasFrameOverlay (scroll del
                         lienzo con marco/sombra y clic de fondo que
                         deselecciona), extraídas de main.py.
@@ -459,6 +460,12 @@ diera problemas, el usuario puede forzar el backend a mano con
   `app_paths.idioma()`, nunca un `QSettings()` pelado. En modo portable deben
   permanecer aislados en `datos/Imago.ini`, sin leer el registro. La migración
   desde el antiguo `MiEstudio/Imago` es conservadora y no borra el origen.
+- **Miniaturas de documentos:** no restaures un sondeo periódico. `Canvas`
+  compara `_huella_visual()` y emite `contenido_visual_cambiado`; la barra
+  agrupa las ráfagas con un `QTimer` de disparo único y conserva una vista previa
+  reducida por lienzo, compartida con su tooltip. Tras regenerarla llama a
+  `confirmar_miniatura_actualizada()`. Cualquier propiedad nueva que altere el
+  compuesto debe formar parte de `_huella_visual()`.
 - **Deshacer/rehacer:** `QUndoStack` en el canvas; los comandos de píxeles viven
   en `tools/commands.py` y los de capas/imagen completa en
   `models/layer_commands.py`. Las acciones de menú se habilitan/deshabilitan por

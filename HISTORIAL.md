@@ -646,3 +646,13 @@ Photopea (julio 2026). Ir marcando `[x]` según se implementen.
   mismo archivo salen tema, preferencias e idioma de `i18n`/`QTranslator`.
   Cubierto por 4 regresiones; suite completa: 70 pruebas en Windows, 3 POSIX
   omitidas condicionalmente.
+- [x] **Miniaturas de documentos dirigidas por cambios** — HECHO (17-07-2026).
+  Eliminado el sondeo que aplanaba el lienzo activo cada 1,2 segundos. Una huella
+  visual compartida con la caché del lienzo invalida ahora la vista previa solo
+  al cambiar píxeles, capas, máscaras, grupos, recorte, efectos o dimensiones;
+  las ráfagas de un trazo se limitan a 4 refrescos/s y en reposo el temporizador
+  permanece parado. La vista previa reducida de 150×110 se reutiliza tanto en la
+  tira como en los tooltips, incluso al cambiar de pestaña. En una medición de
+  2400×1600, 8 capas y 8 efectos se eliminaron 50 composiciones/minuto en reposo
+  (35,63 ms cada una en caliente). Cubierto por 3 regresiones; suite completa:
+  73 pruebas en Windows, 3 POSIX omitidas condicionalmente.

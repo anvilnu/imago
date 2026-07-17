@@ -3,7 +3,8 @@
 
 _ThumbButton (miniatura clicable con 'x' de cerrar), _ThumbStrip (tira
 interior) y TabThumbnailBar (la barra completa con flechas de desplazamiento),
-que MainWindow crea en __init__ y refresca al cambiar de pestaña/documento."""
+que MainWindow crea en __init__. Las vistas previas se invalidan por cambios
+visuales del documento; no existe sondeo periódico en reposo."""
 from PySide6.QtCore import Qt, QSize, QFile, QTimer
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QPushButton,
                                QSizePolicy)
@@ -17,12 +18,14 @@ class _ThumbButton(QWidget):
     W = 88
     H = 50
 
-    def __init__(self, bar, index):
+    def __init__(self, bar, index, canvas=None):
         super().__init__()
         self.bar = bar
         self.index = index
+        self.canvas = canvas
         self.active = False
         self._pixmap = None
+        self._preview_pixmap = None
         self.setFixedSize(self.W, self.H)
         self.setCursor(Qt.PointingHandCursor)
         self.close_btn = QPushButton("\u2715", self)
@@ -98,6 +101,9 @@ class TabThumbnailBar(QWidget):
     sola). No impone ancho mínimo. self.tabs sigue siendo el almacén de datos."""
 
     STRIDE = _ThumbButton.W + 6      # ancho de miniatura + separación
+    REFRESH_MS = 250                 # máximo 4 composiciones/s durante un trazo
+    PREVIEW_W = 150                  # una sola caché sirve también al tooltip
+    PREVIEW_H = 110
 
     def __init__(self, main_window):
         super().__init__()
@@ -107,6 +113,8 @@ class TabThumbnailBar(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._buttons = []
         self._start = 0
+        self._dirty_canvases = set()
+        self._canvas_slots = {}
 
         root = QHBoxLayout(self)
         root.setContentsMargins(4, 0, 6, 0)
@@ -150,22 +158,80 @@ class TabThumbnailBar(QWidget):
         root.addWidget(self.btn_right)
 
         self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(1200)
-        self._refresh_timer.timeout.connect(self._refresh_active_thumb)
-        self._refresh_timer.start()
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(self.REFRESH_MS)
+        self._refresh_timer.timeout.connect(self._refresh_dirty_thumbs)
 
     def _arrow_style(self):
         return theme.arrow_button_qss()
 
-    def _make_thumb(self, canvas):
+    def _make_preview(self, canvas):
         try:
             # NO usar canvas.grab(): a zoom alto el widget puede medir
             # decenas de miles de px (p.ej. 114000x76080 ≈ 34 GB) y bloquear la
             # app. Componemos la imagen a TAMAÑO BASE y la reducimos a miniatura.
             return _canvas_thumb_pixmap(
-                canvas, _ThumbButton.W - 10, _ThumbButton.H - 10)
+                canvas, self.PREVIEW_W, self.PREVIEW_H)
         except Exception:
             return None
+
+    def _connect_canvas(self, canvas):
+        clave = id(canvas)
+        if clave in self._canvas_slots:
+            return
+        signal = getattr(canvas, "contenido_visual_cambiado", None)
+        if signal is None:
+            return
+        slot = lambda c=canvas: self.invalidate_canvas(c)
+        signal.connect(slot)
+        self._canvas_slots[clave] = (canvas, slot)
+
+    def _disconnect_missing_canvases(self, canvases):
+        presentes = {id(canvas) for canvas in canvases if canvas is not None}
+        for clave, (canvas, slot) in list(self._canvas_slots.items()):
+            if clave in presentes:
+                continue
+            try:
+                canvas.contenido_visual_cambiado.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+            self._dirty_canvases.discard(canvas)
+            del self._canvas_slots[clave]
+
+    def _button_for_canvas(self, canvas):
+        return next((b for b in self._buttons if b.canvas is canvas), None)
+
+    def _refresh_canvas_thumb(self, canvas, button=None):
+        button = button or self._button_for_canvas(canvas)
+        if button is None:
+            return False
+        preview = self._make_preview(canvas)
+        if preview is None or preview.isNull():
+            return False
+        button._preview_pixmap = preview
+        button.set_pixmap(preview.scaled(
+            _ThumbButton.W - 10, _ThumbButton.H - 10,
+            Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        confirmar = getattr(canvas, "confirmar_miniatura_actualizada", None)
+        if callable(confirmar):
+            confirmar()
+        actualizar_tooltip = getattr(
+            self.main_window, "update_tab_tooltip", None)
+        if callable(actualizar_tooltip):
+            actualizar_tooltip(button.index, preview)
+        return True
+
+    def preview_for_canvas(self, canvas):
+        button = self._button_for_canvas(canvas)
+        return button._preview_pixmap if button is not None else None
+
+    def invalidate_canvas(self, canvas):
+        """Marca una vista previa y agrupa ráfagas sin temporizador periódico."""
+        if self._button_for_canvas(canvas) is None:
+            return
+        self._dirty_canvases.add(canvas)
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
 
     def _capacity(self):
         # Cuántas miniaturas ENTERAS caben (reservando hueco para las flechas).
@@ -175,18 +241,36 @@ class TabThumbnailBar(QWidget):
         return max(1, (avail + 6) // self.STRIDE)
 
     def rebuild(self):
-        for b in self._buttons:
-            b.setParent(None)
-            b.deleteLater()
-        self._buttons = []
         tabs = self.main_window.tabs
+        canvases = []
         for i in range(tabs.count()):
             marker = tabs.widget(i)
-            btn = _ThumbButton(self, i)
-            if marker is not None and hasattr(marker, 'canvas'):
-                btn.set_pixmap(self._make_thumb(marker.canvas))
+            canvases.append(getattr(marker, "canvas", None))
+
+        anteriores = {id(b.canvas): b for b in self._buttons
+                      if b.canvas is not None}
+        nuevos = []
+        for i, canvas in enumerate(canvases):
+            btn = anteriores.pop(id(canvas), None) if canvas is not None else None
+            if btn is None:
+                btn = _ThumbButton(self, i, canvas)
+                if canvas is not None:
+                    self._connect_canvas(canvas)
+                    self._refresh_canvas_thumb(canvas, btn)
+            else:
+                btn.index = i
+            nuevos.append(btn)
+
+        for btn in anteriores.values():
+            self._strip_layout.removeWidget(btn)
+            btn.setParent(None)
+            btn.deleteLater()
+        for btn in self._buttons:
+            self._strip_layout.removeWidget(btn)
+        self._buttons = nuevos
+        for i, btn in enumerate(self._buttons):
             self._strip_layout.insertWidget(i, btn)
-            self._buttons.append(btn)
+        self._disconnect_missing_canvases(canvases)
         self._update_active()
         QTimer.singleShot(0, self._relayout_active)
 
@@ -195,12 +279,11 @@ class TabThumbnailBar(QWidget):
         for i, b in enumerate(self._buttons):
             b.set_active(i == cur)
 
-    def _refresh_active_thumb(self):
-        cur = self.main_window.tabs.currentIndex()
-        if 0 <= cur < len(self._buttons):
-            marker = self.main_window.tabs.widget(cur)
-            if marker is not None and hasattr(marker, 'canvas'):
-                self._buttons[cur].set_pixmap(self._make_thumb(marker.canvas))
+    def _refresh_dirty_thumbs(self):
+        pendientes = tuple(self._dirty_canvases)
+        self._dirty_canvases.clear()
+        for canvas in pendientes:
+            self._refresh_canvas_thumb(canvas)
 
     def _relayout(self, ensure_active=False):
         n = len(self._buttons)

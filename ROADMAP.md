@@ -221,11 +221,20 @@ prioridades críticas, porque afectan a la integridad del documento.
 
 ### Rendimiento y memoria
 
-- [ ] **Actualizar miniaturas solo cuando cambie el documento.** La miniatura
+- [x] **Actualizar miniaturas solo cuando cambie el documento.** La miniatura
   activa recompone y reduce todo el lienzo cada 1,2 segundos aunque nada haya
   cambiado. Sustituir el sondeo periódico por una revisión/dirty flag, limitar
   la frecuencia durante un trazo y reutilizar el último compuesto o una caché
   reducida. Medir documentos grandes con muchas capas y efectos.
+  Completado el 17-07-2026. `Canvas` emite cambios solo cuando varía la huella
+  visual de dimensiones, capas, máscaras, grupos, recorte y efectos; selección,
+  zoom y animación de hormigas no invalidan. La barra conserva por documento
+  una vista previa de 150×110 compartida con el tooltip y agrupa ráfagas con un
+  `QTimer` de disparo único a 250 ms: en reposo no hay temporizador activo ni
+  recomposiciones. Medición Windows, documento 2400×1600 con 8 capas y 8 efectos:
+  412,78 ms en frío, 35,63 ms en caliente y 17,92 µs por huella; se eliminan
+  los 50 sondeos/minuto anteriores. Cubierto por 3 regresiones de caché,
+  agrupación/reposo e invalidación visual.
 
 - [ ] **Evitar matrices de imagen completa al iniciar herramientas locales.**
   Dedo, Licuar, Esponja y Sobreexponer/Subexponer convierten la capa completa y

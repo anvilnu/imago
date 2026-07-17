@@ -848,8 +848,11 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
             # Refrescar estados visuales comunes
             self.update_undo_redo_actions_state()
             QTimer.singleShot(0, lambda c=canvas: self._restore_or_fit_canvas_zoom(c))
+            # La barra conserva una única caché reducida por documento; los
+            # tooltips la reutilizan y no vuelven a componer todas las capas.
+            if hasattr(self, 'thumbnail_bar'):
+                self.thumbnail_bar.rebuild()
             self.update_tab_tooltips()
-            if hasattr(self, 'thumbnail_bar'): self.thumbnail_bar.rebuild()
 
             # NUEVO: Forzamos al nuevo lienzo enfocado a adoptar la herramienta activa de la UI
             if hasattr(self, 'current_tool_name'):

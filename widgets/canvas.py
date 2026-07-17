@@ -2,7 +2,7 @@ from i18n import t
 # widgets/canvas.py
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QImage, QColor, QBrush, QUndoStack, QRegion
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Signal
 from models.layer import (Layer, visible_efectiva, visible_para_fusion,
                           base_de_recorte, render_recortada)
 
@@ -18,6 +18,8 @@ HERRAMIENTAS_DE_PIXELES = {
 import theme
 
 class Canvas(QWidget):
+    contenido_visual_cambiado = Signal()
+
     def __init__(self, width=800, height=600):
         super().__init__()
         self.setAttribute(Qt.WA_StaticContents)
@@ -58,6 +60,10 @@ class Canvas(QWidget):
         # a undo_stack.index(): deshacer y crear otra rama puede volver al mismo
         # índice con contenido distinto. El autoguardado usa esta identidad.
         self.revision_autoguardado = 0
+        # Huella de la composición cuya miniatura ya se notificó. La barra de
+        # pestañas la confirma tras regenerar su caché reducida; así una
+        # selección, el zoom o las hormigas no fuerzan miniaturas nuevas.
+        self._estado_miniatura_notificado = None
         # 🔔 Avisar a la herramienta activa cuando el historial cambie
         # (deshacer/rehacer): así la caja de Mover selección sigue los cambios
         self.undo_stack.indexChanged.connect(self._on_history_changed)
@@ -427,6 +433,44 @@ class Canvas(QWidget):
         painter.end()
         return final_image
 
+    def _huella_visual(self):
+        """Identidad barata del resultado compuesto que ve el usuario.
+
+        No rasteriza el documento: combina dimensiones, orden y propiedades
+        visibles con los cacheKey de imágenes y máscaras. Se comparte con la
+        caché de pintado para que lienzo y miniaturas invaliden por las mismas
+        causas, incluidos grupos, recorte y efectos de capa.
+        """
+        capas = []
+        for layer in self.layers:
+            fx = tuple(e.fingerprint() for e in getattr(layer, "effects", ())
+                       if getattr(e, "activo", False))
+            mask = getattr(layer, "mask", None)
+            capas.append((
+                layer.image.cacheKey() if layer.image else 0,
+                mask.cacheKey() if mask is not None else 0,
+                getattr(layer, "clipped", False),
+                layer.opacity,
+                visible_efectiva(layer),
+                getattr(layer, "blend_mode", 0),
+                getattr(layer, "alpha_locked", False),
+                fx,
+            ))
+        return self.base_width, self.base_height, tuple(capas)
+
+    def _notificar_cambio_visual(self):
+        """Emite solo si el compuesto cambió desde la última notificación."""
+        estado = self._huella_visual()
+        if estado == self._estado_miniatura_notificado:
+            return False
+        self._estado_miniatura_notificado = estado
+        self.contenido_visual_cambiado.emit()
+        return True
+
+    def confirmar_miniatura_actualizada(self):
+        """Fija la huella que representa la caché reducida recién creada."""
+        self._estado_miniatura_notificado = self._huella_visual()
+
     # =========================================================================
     # SELECCIÓN Y PORTAPAPELES
     # =========================================================================
@@ -586,6 +630,9 @@ class Canvas(QWidget):
         """El historial cambió (deshacer/rehacer/nuevo comando): si la
         herramienta activa quiere resincronizarse, se lo decimos."""
         self.revision_autoguardado += 1
+        # También cubre undo/redo y cambios en documentos no visibles. La
+        # comparación de huella evita invalidar por comandos solo de selección.
+        self._notificar_cambio_visual()
         tool = getattr(self, 'current_tool', None)
         if tool is not None and hasattr(tool, 'on_history_changed'):
             tool.on_history_changed()
@@ -1600,35 +1647,14 @@ class Canvas(QWidget):
                 self._cache_valid_region = QRegion()
                 self._last_cache_state = None
                 
-            state = []
-            for layer in self.layers:
-                # ✨ Huella de los efectos ACTIVOS: cambiar/añadir/quitar/reordenar
-                # o togglear un efecto altera esta tupla e invalida la caché de
-                # composición (el resultado del efecto se recomputa en su propia
-                # caché por capa dentro de render_with_effects()).
-                fx = tuple(e.fingerprint() for e in getattr(layer, "effects", ())
-                           if getattr(e, "activo", False))
-                mask = getattr(layer, "mask", None)
-                state.append((
-                    layer.image.cacheKey() if layer.image else 0,
-                    # 🎭 La máscara también invalida (pintar sobre ella cambia el
-                    # render); ✂️ y la marca de recorte (activarla/quitarla
-                    # cambia la composición; los cambios de la BASE ya invalidan
-                    # por su propio cacheKey).
-                    mask.cacheKey() if mask is not None else 0,
-                    getattr(layer, "clipped", False),
-                    layer.opacity,
-                    # 📁 Visibilidad EFECTIVA (capa Y sus grupos): así ocultar o
-                    # mostrar una carpeta invalida la caché igual que la casilla
-                    # de la propia capa.
-                    visible_efectiva(layer),
-                    getattr(layer, "blend_mode", 0),
-                    getattr(layer, "alpha_locked", False),
-                    fx,
-                ))
+            state = self._huella_visual()
             if state != getattr(self, "_last_cache_state", None):
                 self._cache_valid_region = QRegion()
                 self._last_cache_state = state
+                # Durante un trazo los píxeles cambian antes de entrar en el
+                # historial. Detectarlos aquí mantiene la miniatura en vivo sin
+                # sondear el documento cuando la aplicación está inactiva.
+                self._notificar_cambio_visual()
 
             # --- RECOMPOSICIÓN PARCIAL ---
             dirty_region = QRegion(src_rect_int).subtracted(self._cache_valid_region)
