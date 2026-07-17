@@ -141,7 +141,7 @@ prioridades críticas, porque afectan a la integridad del documento.
   los eventos `DeferredDelete` y comprueban que los cuatro objetos Qt dejan de
   ser válidos, mientras el documento recién abierto permanece intacto.
 
-- [ ] **Endurecer el cargador `.imago` y versionar el contrato.** Validar
+- [x] **Endurecer el cargador `.imago` y versionar el contrato.** Validar
   `version`, tipos, dimensiones positivas y razonables, número de capas,
   tamaño descomprimido, dimensiones de PNG/máscaras, índices activos, modos de
   fusión y guías. Rechazar ciclos de grupos (A→B→A), que hoy pueden dejar
@@ -149,6 +149,15 @@ prioridades críticas, porque afectan a la integridad del documento.
   los errores de archivo/esquema a un error de proyecto comprensible. No abrir
   ni volver a guardar silenciosamente una versión futura que contenga datos
   desconocidos.
+  Completado el 17-07-2026 y cubierto por 10 regresiones específicas.
+  `load_project()` valida ahora íntegramente el contrato v1 antes de crear capas:
+  versión, claves y tipos, dimensiones y memoria estimada, cantidades, rutas y
+  tamaños ZIP, PNG y máscaras del tamaño exacto, índices, modos de fusión,
+  guías, grupos y efectos. Rechaza ciclos, referencias huérfanas, entradas
+  duplicadas o desconocidas y versiones futuras para impedir que un posterior
+  guardado elimine información que esta versión no entiende. Todos los fallos
+  se traducen a `ErrorCargaProyecto` con mensajes ES/EN/FR; una prueba de ida y
+  vuelta confirma que el guardador actual cumple el contrato.
 
 - [ ] **Conservar el DPI en `.imago` y hacerlo parte del historial sucio.** El
   manifiesto no serializa `canvas.dpi`; al reabrir vuelve a 96. Cambiar solo

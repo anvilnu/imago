@@ -590,3 +590,14 @@ Photopea (julio 2026). Ir marcando `[x]` según se implementen.
   Dos regresiones con widgets Qt reales fuerzan `DeferredDelete` y comprueban
   tanto la destrucción completa como la conservación de la pestaña nueva. Suite
   completa: 49 pruebas en Windows; 3 casos POSIX omitidos condicionalmente.
+- [x] **Contrato seguro y versionado para proyectos `.imago`** — HECHO
+  (17-07-2026). El cargador valida completamente el manifiesto v1 antes de
+  reservar imágenes: versión, esquema, tipos, dimensiones, memoria estimada,
+  capas, guías, modos de fusión, grupos y referencias. El ZIP tiene límites por
+  entrada y totales; las cabeceras PNG se comprueban antes de decodificarlas y
+  cada capa/máscara debe medir exactamente lo mismo que el lienzo. Se rechazan
+  ciclos de grupos, entradas duplicadas o desconocidas, máscaras corruptas,
+  efectos no soportados y versiones futuras, evitando cuelgues y pérdida
+  silenciosa al volver a guardar. `ErrorCargaProyecto` unifica los fallos con
+  mensajes ES/EN/FR. Cubierto por 10 regresiones, incluida una ida y vuelta con
+  el guardador real; suite completa: 59 pruebas en Windows, 3 POSIX omitidas.
