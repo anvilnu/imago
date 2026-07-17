@@ -679,14 +679,15 @@ class AccionesMenuArchivo:
         dlg.exec()
 
     def export_animation(self):
-        """Archivo > Exportar animación: las capas VISIBLES pasan a ser los
-        fotogramas de un GIF o WebP animado (de abajo hacia arriba, cada una
-        con su opacidad y máscara). Escribe Pillow (import perezoso en
-        models/anim_io.py); si falta, se avisa y no se rompe nada."""
+        """Archivo > Exportar animación: las capas efectivamente visibles pasan
+        a ser los fotogramas de un GIF o WebP animado (de abajo hacia arriba,
+        cada una con su opacidad, máscara y efectos). Escribe Pillow (import
+        perezoso en models/anim_io.py); si falta, se avisa y no se rompe nada."""
         canvas = self.get_current_canvas()
         if not canvas:
             return
-        visibles = [l for l in canvas.layers if l.visible]
+        from models.anim_io import capas_de_animacion
+        visibles = capas_de_animacion(canvas)
         if len(visibles) < 2:
             imago_warning(self, t("dlg.anim_export"), t("msg.anim.need_layers"))
             return

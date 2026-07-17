@@ -187,12 +187,20 @@ prioridades críticas, porque afectan a la integridad del documento.
   conserva la escritura atómica existente y las copias antiguas solo se podan
   después de publicar correctamente el nuevo manifiesto.
 
-- [ ] **Respetar grupos y efectos al exportar animaciones.**
+- [x] **Respetar grupos y efectos al exportar animaciones.**
   `frames_de_capas()` usa `layer.visible` en lugar de
   `visible_efectiva(layer)` y `render_image()` en lugar del render con efectos;
   una capa dentro de un grupo oculto todavía se exporta y los efectos pueden
   desaparecer. Unificar la precomprobación, preview y exportación con la misma
   función de render de fotograma.
+  Completado el 17-07-2026. `capas_de_animacion()` es ahora la única selección
+  de fotogramas para la precomprobación y respeta la visibilidad de la capa, su
+  grupo y todos sus ancestros. `frames_de_capas()` consume esa lista y usa
+  `render_with_effects()`, que conserva también máscara y efectos antes de
+  aplicar la opacidad. La preview y `save_animation()` ya compartían estos
+  fotogramas, por lo que las tres rutas muestran y exportan ahora el mismo
+  resultado. Cubierto por 3 regresiones de grupos anidados, visibilidad propia,
+  duraciones y render con efectos.
 
 - [ ] **Unificar la identidad de QSettings y el traductor de Qt.** Los ajustes
   usan `app_paths.settings()` (`MiEstudio/Imago` o INI portable), pero el

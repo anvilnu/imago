@@ -1,12 +1,13 @@
 # models/anim_io.py
-# Exportación de animaciones GIF/WebP: las CAPAS visibles del lienzo son los
-# fotogramas (de abajo hacia arriba). Escribe con Pillow (import PEREZOSO,
+# Exportación de animaciones GIF/WebP: las CAPAS efectivamente visibles del
+# lienzo son los fotogramas (de abajo hacia arriba). Escribe con Pillow (import PEREZOSO,
 # como en exif_utils: Qt no trae escritor animado); si falta, se avisa y no
 # se rompe nada.
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter
 from atomic_io import escribir_atomico
+from models.layer import visible_efectiva
 
 
 def _qimage_a_pil(img):
@@ -20,21 +21,25 @@ def _qimage_a_pil(img):
     return Image.frombuffer("RGBA", (W, H), datos, "raw", "RGBA", bpl, 1).copy()
 
 
+def capas_de_animacion(canvas):
+    """Capas que aportan fotogramas, respetando su visibilidad y la de todos
+    sus grupos. Conserva el orden del lienzo: de abajo hacia arriba."""
+    return [layer for layer in canvas.layers if visible_efectiva(layer)]
+
+
 def frames_de_capas(canvas):
-    """Fotogramas de la animación: una imagen RGBA por capa VISIBLE, de abajo
-    hacia arriba, cada una compuesta SUELTA (con su opacidad y máscara) sobre
-    transparente a tamaño de lienzo. Devuelve (frames, delays), con el
-    frame_delay de cada capa (o None si no lo trae)."""
+    """Fotogramas de la animación: una imagen RGBA por capa efectivamente
+    visible, de abajo hacia arriba, compuesta SUELTA con máscara, efectos y
+    opacidad sobre transparente a tamaño de lienzo. Devuelve (frames, delays),
+    con el frame_delay de cada capa (o None si no lo trae)."""
     frames, delays = [], []
-    for layer in canvas.layers:
-        if not layer.visible:
-            continue
+    for layer in capas_de_animacion(canvas):
         base = QImage(canvas.base_width, canvas.base_height,
                       QImage.Format_ARGB32_Premultiplied)
         base.fill(Qt.transparent)
         p = QPainter(base)
         p.setOpacity(max(0, min(100, int(layer.opacity))) / 100.0)
-        p.drawImage(0, 0, layer.render_image())
+        p.drawImage(0, 0, layer.render_with_effects())
         p.end()
         frames.append(base)
         delays.append(getattr(layer, "frame_delay", None))

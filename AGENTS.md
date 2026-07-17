@@ -488,6 +488,10 @@ diera problemas, el usuario puede forzar el backend a mano con
   dato `("layer", idx)` / `("group", grupo)` en el UserRole: NO se puede
   deducir la capa de la posición de la fila (hay cabeceras y plegado). El
   plegado (`group.expanded`) es solo UI (ni historial ni documento sucio).
+  La animación usa `capas_de_animacion()` y `frames_de_capas()` de
+  `models/anim_io.py` para precomprobación, preview y exportación: no cuentes
+  `layer.visible` directamente ni sustituyas `render_with_effects()` por el
+  render base, porque reaparecerían capas de grupos ocultos o se perderían fx.
 - **Cargar imágenes de disco:** SIEMPRE con `cargar_imagen_orientada(ruta)` de
   `utilidades.py` (QImageReader + setAutoTransform, reexportada por `main.py`),
   que aplica la rotación EXIF de las fotos de móvil. `QImage(ruta)` a secas las

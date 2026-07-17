@@ -626,3 +626,11 @@ Photopea (julio 2026). Ir marcando `[x]` según se implementen.
   fallo conserva el manifiesto y las copias recuperables anteriores. Cubierto
   por una regresión que alcanza el mismo índice mediante dos ramas distintas;
   suite completa: 62 pruebas en Windows, 3 POSIX omitidas condicionalmente.
+- [x] **Animaciones coherentes con grupos y efectos** — HECHO (17-07-2026).
+  La precomprobación de Exportar, la preview y la escritura GIF/WebP comparten
+  ahora `capas_de_animacion()`/`frames_de_capas()`: una carpeta oculta excluye
+  también los fotogramas de sus subgrupos y cada capa se rasteriza mediante
+  `render_with_effects()`, conservando máscara, efectos, opacidad y duración.
+  Tres regresiones comprueban grupos anidados, visibilidad individual y que el
+  píxel exportado procede del resultado con efectos; suite completa: 65 pruebas
+  en Windows, 3 POSIX omitidas condicionalmente.

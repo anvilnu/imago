@@ -345,6 +345,9 @@ class _CapaFotograma:
     def render_image(self):
         return self.image
 
+    def render_with_effects(self):
+        return self.image
+
 
 class _CanvasAnimacion:
     base_width = 4
