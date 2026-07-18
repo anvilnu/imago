@@ -35,9 +35,10 @@ for _raiz, _dirs, _archivos in os.walk('plugins'):
         _ruta = os.path.join(_raiz, _f)
         datas.append((_ruta, _raiz))
 
-# pillow_heif (.avif/.heic) y pillow_jxl (.jxl) tambien llevan DLLs nativas de
-# codecs y se importan PEREZOSAMENTE (main._cargar_via_pillow): collect_all los
-# arrastra completos para que el instalador y el portable abran esos formatos.
+# pillow_heif (.heic/.heif) y pillow_jxl (.jxl) tambien llevan DLLs nativas de
+# codecs y se importan PEREZOSAMENTE desde utilidades.py: collect_all los
+# arrastra completos para que el instalador y el portable abran y guarden esos
+# formatos.
 for _pkg in ('onnxruntime', 'cv2', 'scipy', 'psd_tools',
              'pillow_heif', 'pillow_jxl'):
     _d, _b, _h = collect_all(_pkg)

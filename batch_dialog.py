@@ -26,14 +26,16 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout,
 
 import theme
 from i18n import t
-from utilidades import cargar_imagen_orientada
+from utilidades import (cargar_imagen_orientada, formatos_pillow_escribibles,
+                        guardar_imagen_pillow)
 from widgets.custom_titlebar import FramelessDialog, imago_warning
 
 
 # Formatos de salida CON canal alfa: se guardan sobre fondo transparente.
 # El resto (JPG, BMP...) se aplana sobre blanco, como hace _save_image.
 _EXTS_ALFA = {"png", "webp", "tif", "tiff", "gif", "tga", "ico", "icns",
-              "xpm", "cur"}
+              "xpm", "cur", "avif", "heic", "heif", "jxl"}
+_EXTS_PILLOW = {"avif", "heic", "heif", "jxl"}
 
 # Posiciones de la marca de agua: (fila, columna) codificadas en dos letras
 # (t/c/b = arriba/centro/abajo, l/c/r = izquierda/centro/derecha).
@@ -83,8 +85,7 @@ def _ruta_destino(origen, p, num, ext=None):
     si se pidió renombrar; `num` es el ordinal del archivo), con la extensión
     del formato elegido (o la original con «Mantener formato»), en la carpeta
     de destino. `ext` fuerza la extensión: la copia directa conserva la
-    original SIN pasar por el chequeo de formatos escribibles (copiar un GIF o
-    un AVIF es perfectamente posible; re-codificarlos no)."""
+    original SIN pasar por el chequeo de formatos escribibles."""
     if p["rename_base"]:
         nombre = "%s_%0*d" % (p["rename_base"], p["rename_pad"], num)
     else:
@@ -93,8 +94,8 @@ def _ruta_destino(origen, p, num, ext=None):
         ext_src = os.path.splitext(origen)[1].lower().lstrip(".")
         ext = p["format"] or ext_src
         if ext not in p["writable_exts"]:
-            # Formato solo de lectura (GIF, AVIF...): con «Mantener formato» no
-            # hay salida posible; se avisa por archivo para que elija formato.
+            # Si falta el escritor del formato original, «Mantener formato» no
+            # puede recodificarlo; se avisa para que elija otro formato.
             raise ValueError(t("batch.err.format_ro", ext=ext_src.upper()))
     return _ruta_unica(os.path.join(p["dst_dir"], nombre + "." + ext))
 
@@ -192,11 +193,16 @@ def _guardar(img, origen, destino, p):
         plano.setDotsPerMeterY(img.dotsPerMeterY())
         img = plano
     def _escribir(ruta_temporal):
-        writer = QImageWriter(ruta_temporal)
-        if ext in ("jpg", "jpeg", "webp"):
-            writer.setQuality(p["quality"])
-        if not writer.write(img):
-            return False
+        if ext in _EXTS_PILLOW:
+            if not guardar_imagen_pillow(
+                    img, ruta_temporal, ext, calidad=p["quality"]):
+                return False
+        else:
+            writer = QImageWriter(ruta_temporal)
+            if ext in ("jpg", "jpeg", "webp"):
+                writer.setQuality(p["quality"])
+            if not writer.write(img):
+                return False
         ext_src = os.path.splitext(origen)[1].lower().lstrip(".")
         if p["keep_exif"] and ext in ("jpg", "jpeg") and ext_src in ("jpg", "jpeg"):
             # Igual que _save_image: el bloque EXIF se incrusta aún en el
@@ -222,7 +228,7 @@ def _trabajo_lote(p, report, token):
     # píxeles, peso y metadatos (nada de pérdida generacional JPEG ni de
     # hornear la rotación EXIF, que intercambiaba ancho×alto en las fotos de
     # móvil). Quien quiera RE-COMPRIMIR una carpeta con la calidad del slider
-    # debe elegir JPEG/WebP como formato de salida, no «Mantener formato».
+    # debe elegir un formato de salida, no «Mantener formato».
     copia_directa = (p["resize_mode"] == "no" and p["wm_mode"] == "none"
                      and p["format"] is None)
     for i, origen in enumerate(p["files"]):
@@ -344,8 +350,13 @@ class BatchDialog(FramelessDialog):
         # ------------------------------------------------------- formato
         self.format_combo = QComboBox()
         self.format_combo.addItem(t("batch.format.keep"), None)
+        modernos = formatos_pillow_escribibles()
         for ext, texto in (("png", "PNG"), ("jpg", "JPEG"), ("webp", "WebP"),
-                           ("bmp", "BMP"), ("tif", "TIFF")):
+                           ("bmp", "BMP"), ("tif", "TIFF"),
+                           ("avif", t("fmt.avif")), ("heic", t("fmt.heic")),
+                           ("heif", t("fmt.heif")), ("jxl", t("fmt.jpeg_xl"))):
+            if ext in _EXTS_PILLOW and ext not in modernos:
+                continue
             self.format_combo.addItem(texto, ext)
         self._add_row(t("batch.format"), self.format_combo)
 
@@ -511,7 +522,9 @@ class BatchDialog(FramelessDialog):
         self._set_row_visible(self._row_percent, modo_r == "percent")
         self._set_row_visible(self._row_fit, modo_r == "fit")
         fmt = self.format_combo.currentData()
-        self._set_row_visible(self._row_quality, fmt in (None, "jpg", "webp"))
+        self._set_row_visible(
+            self._row_quality,
+            fmt in (None, "jpg", "webp", "avif", "heic", "heif", "jxl"))
         modo_w = self.wm_combo.currentData()
         self._set_row_visible(self._row_wm_text, modo_w == "text")
         self._set_row_visible(self._row_wm_size, modo_w == "text")
@@ -627,6 +640,7 @@ class BatchDialog(FramelessDialog):
         from PySide6.QtGui import QImageWriter
         escribibles = {bytes(b).decode().lower()
                        for b in QImageWriter.supportedImageFormats()}
+        escribibles |= formatos_pillow_escribibles()
 
         settings = getattr(self._main, "settings", None)
         keep_gps = settings.value("save/keep_gps", True, type=bool) if settings else True

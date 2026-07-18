@@ -1,7 +1,7 @@
 # utilidades.py
-"""Utilidades compartidas de Imago (extraídas de main.py TAL CUAL, sin cambios
-de comportamiento): creación de iconos temados, carga de imágenes de disco
-aplicando la orientación EXIF (con fallback Pillow OPCIONAL para AVIF/HEIC/JXL)
+"""Utilidades compartidas de Imago: creación de iconos temados, carga de imágenes
+de disco aplicando la orientación EXIF y escritura Pillow OPCIONAL para
+AVIF/HEIC/JXL,
 y miniaturas de lienzo con tablero de transparencia. Viven en un módulo propio
 para que los mixins de MainWindow (menu_archivo, opciones_herramientas...)
 puedan importarlas sin crear un import circular con main.py."""
@@ -75,6 +75,78 @@ def cargar_imagen_orientada(ruta):
 # OPCIONAL (import perezoso, como onnxruntime: sin él, Imago funciona igual).
 _PILLOW_EXTRA = {"avif": "pillow-heif", "heic": "pillow-heif",
                  "heif": "pillow-heif", "jxl": "pillow-jxl-plugin"}
+_PILLOW_FORMATO = {"avif": "AVIF", "heic": "HEIF",
+                   "heif": "HEIF", "jxl": "JXL"}
+
+
+def _registrar_formato_pillow(ext):
+    """Registra perezosamente el códec Pillow de ``ext``.
+
+    Pillow 12 ya puede traer AVIF en sus propias ruedas; ``pillow-heif`` sigue
+    aportando HEIC/HEIF y se registra también para AVIF en versiones que aún
+    exponen ese plugin. Devuelve la clase ``PIL.Image`` o ``None``.
+    """
+    ext = ext.lower().lstrip(".")
+    if ext not in _PILLOW_FORMATO:
+        return None
+    try:
+        if ext == "jxl":
+            import pillow_jxl  # noqa: F401  (registra el plugin al importarse)
+        elif ext in ("heic", "heif"):
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        else:
+            try:
+                import pillow_heif
+            except ImportError:
+                pillow_heif = None
+            if pillow_heif is not None and hasattr(pillow_heif, "register_avif_opener"):
+                pillow_heif.register_avif_opener()
+        from PIL import Image
+        Image.init()
+        return Image
+    except Exception:
+        return None
+
+
+def formatos_pillow_escribibles():
+    """Extensiones modernas que la instalación actual de Pillow puede escribir."""
+    disponibles = set()
+    for ext, formato in _PILLOW_FORMATO.items():
+        Image = _registrar_formato_pillow(ext)
+        if Image is not None and formato in Image.SAVE:
+            disponibles.add(ext)
+    return disponibles
+
+
+def guardar_imagen_pillow(qimg, ruta, ext, calidad=-1):
+    """Escribe un ``QImage`` como AVIF/HEIC/HEIF/JXL mediante Pillow.
+
+    Conserva el alfa y devuelve ``False`` si falta el códec o falla la
+    codificación. El llamante se encarga de la publicación atómica.
+    """
+    ext = ext.lower().lstrip(".")
+    Image = _registrar_formato_pillow(ext)
+    formato = _PILLOW_FORMATO.get(ext)
+    if Image is None or formato not in Image.SAVE:
+        return False
+    try:
+        img = qimg.convertToFormat(QImage.Format_RGBA8888)
+        w, h, bpl = img.width(), img.height(), img.bytesPerLine()
+        datos = bytes(img.constBits())
+        if bpl != w * 4:
+            datos = b"".join(datos[y * bpl:y * bpl + w * 4] for y in range(h))
+        pil = Image.frombytes("RGBA", (w, h), datos)
+        opciones = {}
+        if calidad is not None and calidad >= 0:
+            opciones["quality"] = max(0, min(100, int(calidad)))
+        try:
+            pil.save(ruta, format=formato, **opciones)
+        finally:
+            pil.close()
+        return True
+    except Exception:
+        return False
 
 
 def _cargar_via_pillow(ruta):
@@ -85,14 +157,10 @@ def _cargar_via_pillow(ruta):
     if ext not in _PILLOW_EXTRA:
         return QImage()
     try:
-        if ext == "jxl":
-            import pillow_jxl  # noqa: F401  (registra el plugin al importarse)
-        else:
-            import pillow_heif
-            pillow_heif.register_heif_opener()
-            if hasattr(pillow_heif, "register_avif_opener"):
-                pillow_heif.register_avif_opener()
-        from PIL import Image, ImageOps
+        Image = _registrar_formato_pillow(ext)
+        if Image is None or _PILLOW_FORMATO[ext] not in Image.OPEN:
+            return QImage()
+        from PIL import ImageOps
         with Image.open(ruta) as im:
             im = ImageOps.exif_transpose(im)
             im = im.convert("RGBA")
