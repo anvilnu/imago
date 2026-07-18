@@ -34,8 +34,8 @@ _CANCEL_GRACE = 0.5
 _gpu_fallback = None
 _gpu_fallback_lock = threading.Lock()
 
-# Modelos que YA fallaron en la GPU en ESTA maquina (crash nativo o error de operacion
-# de DirectML): no se vuelve a intentar la GPU con ellos, van directos a CPU. Asi no se
+# Modelos que YA demostraron fallar solo en la GPU en ESTA maquina: no se vuelve
+# a intentar la GPU con ellos, van directos a CPU. Asi no se
 # repite el crash/error, la recarga del modelo ni el aviso. Se PERSISTE en QSettings
 # (clave "ai/gpu_unsafe") para no reintentar-y-fallar en cada sesion; se limpia al
 # cambiar la preferencia de GPU (Preferencias -> IA), por si se actualiza el driver.
@@ -45,9 +45,8 @@ _gpu_unsafe = None
 # Version del mapa de marcas: SUBELA cuando cambien los modelos detras de un tag
 # module:func (las marcas viejas ya no aplican al modelo nuevo). Al arrancar, si la
 # version guardada no coincide, se descartan las marcas persistidas y se reevalua la
-# GPU. (v2 = 2026-07: denoise cambio de SCUNet a NAFNet, que SI corre en DirectML; asi
-# las marcas viejas de "ai.denoise:denoise" dejan de forzar CPU con el modelo nuevo.)
-_GPU_UNSAFE_VERSION = 2
+# GPU. v3 descarta marcas antiguas creadas por errores que tambien fallaban en CPU.
+_GPU_UNSAFE_VERSION = 3
 
 
 def _gpu_unsafe_set():
@@ -132,20 +131,23 @@ def run_model(module, func, *args, report=None, token=None, **kwargs):
     if not prefer_gpu:
         return _run_cpu(module, func, args, kwargs, report, token)
 
-    # Intento en GPU. CUALQUIER fallo cuenta: tanto un crash NATIVO (access violation
-    # de DirectML, p. ej. SCUNet) como un ERROR de operacion capturado (p. ej. LaMa:
-    # "Non-zero status code ... MatMul ... El parametro no es correcto"). En ambos casos
-    # se marca el modelo, se avisa y se cae a CPU (estable).
+    # Intento en GPU. Un fallo solo se atribuye permanentemente al proveedor si
+    # el MISMO trabajo termina bien al reintentarlo en CPU. Si CPU tambien falla
+    # (modelo corrupto, entrada invalida, error de codigo...), se conserva el error
+    # sin contaminar la preferencia de futuras sesiones.
     try:
         return _run_isolated(module, func, args, kwargs, force_cpu=False,
                              report=report, token=token)
     except Exception:
         if token is not None and token.cancelled:
             return None
+        result = _run_cpu(module, func, args, kwargs, report, token)
+        if token is not None and token.cancelled:
+            return None
         with _gpu_fallback_lock:
             _mark_gpu_unsafe(module, func)
         _mark_gpu_fallback(func)
-        return _run_cpu(module, func, args, kwargs, report, token)
+        return result
 
 
 def _run_cpu(module, func, args, kwargs, report, token):

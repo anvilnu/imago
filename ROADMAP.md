@@ -385,12 +385,26 @@ prioridades críticas, porque afectan a la integridad del documento.
   serialización y comparación, además de la suite completa de 118 pruebas
   (3 POSIX omitidas en Windows).
 
-- [ ] **Verificar completamente los modelos de IA instalados.**
+- [x] **Verificar completamente los modelos de IA instalados.**
   `is_installed()` solo comprueba que exista el `.onnx`; no verifica hash ni
   el `.data` acompañante. Conservar una marca de instalación validada, hacer
   atómica la extracción de ZIP y volver a verificar después de descarga o al
   detectar un error de carga. No marcar permanentemente una operación como
   incompatible con GPU por errores que no sean realmente del proveedor GPU.
+  Completado el 18-07-2026. Cada modelo conserva ahora una marca JSON publicada
+  atómicamente con la firma del catálogo, todos sus ficheros, tamaños, fechas y
+  SHA-256. La ruta habitual solo compara metadatos; una marca ausente/cambiada o
+  un error al crear la sesión ONNX fuerza la lectura completa. Los `.onnx.data`
+  separados se validan con su hash propio y los ZIP se verifican antes de extraer
+  el conjunto exacto `.onnx`+`.data` en un staging del mismo volumen. La
+  publicación deja la marca para el final y restaura la instalación anterior si
+  falla un reemplazo. En Windows se liberan antes las sesiones abiertas.
+  El fallback aislado GPU→CPU solo se persiste cuando el mismo trabajo termina
+  correctamente en CPU; si ambas rutas fallan, el error se propaga sin marcar la
+  GPU. Se invalidaron las marcas antiguas potencialmente falsas (versión 3).
+  Cubierto por 7 regresiones nuevas de integridad, datos externos, ZIP incompleto,
+  rollback, error de carga y clasificación GPU, además de la suite completa de
+  125 pruebas superadas en Windows 11 (3 POSIX omitidas automáticamente).
 
 - [ ] **Limpiar duplicados de i18n y centralizar el estilo restante.**
   `opt.chk.antialias` está definida dos veces con textos distintos y varias

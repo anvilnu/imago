@@ -26,6 +26,7 @@ entregan a on_error como texto. Una tarea cancelada NO invoca on_done/on_error.
 import uuid
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from i18n import t
 
 
 # ------------------------------------------------------------------ cancelacion
@@ -202,7 +203,14 @@ def get_session(model_path, providers=None):
         try:
             sess = ort.InferenceSession(
                 model_path, sess_options=so, providers=list(providers))
-        except Exception:
+        except Exception as exc:
+            # Un .data ausente o un modelo alterado puede producir mensajes muy
+            # parecidos a un fallo del proveedor. Releer los hashes antes de
+            # intentar CPU evita ocultar una instalacion corrupta.
+            from ai.model_integrity import verify_marked_model
+            integrity = verify_marked_model(model_path, force=True)
+            if integrity is False:
+                raise RuntimeError(t("ai.models.corrupt_load")) from exc
             if list(providers) == ["CPUExecutionProvider"]:
                 raise
             # La GPU no pudo con este modelo: red de seguridad solo-CPU.

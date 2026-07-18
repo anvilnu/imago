@@ -17,9 +17,12 @@ mientras esten a None, la fila se muestra pero la descarga queda deshabilitada.
 """
 
 import os
+import json
 import shutil
 import hashlib
+import tempfile
 import urllib.request
+import zipfile
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -31,6 +34,8 @@ from i18n import t
 from widgets.custom_titlebar import FramelessDialog, imago_question
 from PySide6.QtWidgets import QMessageBox
 from ai.runner import InferenceRunner, onnx_available, clear_sessions
+from ai.model_integrity import (MARKER_VERSION, file_state, load_marker,
+                                marker_path, marker_stats_match)
 
 
 # ===========================================================================
@@ -273,7 +278,12 @@ def _disk_files(model):
 
 
 def is_installed(model):
-    return os.path.isfile(path_for(model))
+    """True solo si estan todos los ficheros y su integridad esta validada.
+
+    La marca evita releer modelos de cientos de MB en cada consulta. Si falta o
+    cambian los metadatos, se recalculan los hashes completos.
+    """
+    return verify_installation(model)
 
 
 def installed_size(model):
@@ -294,13 +304,14 @@ def total_installed_size():
 def delete_model(model):
     """Borra los archivos del modelo (si existen). Limpia la cache de sesiones por
     si estaba cargado."""
-    for p in _disk_files(model):
+    # En Windows una sesion puede mantener el ONNX abierto e impedir borrarlo.
+    clear_sessions()
+    for p in _disk_files(model) + [marker_path(path_for(model))]:
         try:
             if os.path.isfile(p):
                 os.remove(p)
         except OSError:
             pass
-    clear_sessions()
 
 
 # ===========================================================================
@@ -318,18 +329,198 @@ def verify_file(path, sha256):
     return os.path.isfile(path) and _sha256_of(path).lower() == sha256.lower()
 
 
-def _extract_model_zip(zip_path, model):
-    """Extrae de un ZIP los ficheros del modelo (.onnx y .data), APLANADOS por
-    nombre base, a la carpeta de modelos. El .onnx referencia el .data por su
-    nombre base, asi que ambos deben quedar como hermanos."""
-    import zipfile
-    dest = models_dir()
-    with zipfile.ZipFile(zip_path) as zf:
-        for member in zf.namelist():
-            base = os.path.basename(member)
-            if base.endswith((".onnx", ".data")):
-                with zf.open(member) as src, open(os.path.join(dest, base), "wb") as out:
-                    shutil.copyfileobj(src, out)
+def _file_names(model):
+    """Nombres base exactos que forman una instalacion."""
+    names = [model.filename]
+    if model.archive:
+        names.append(os.path.splitext(model.filename)[0] + ".data")
+    elif model.data_url:
+        names.append(model.filename + ".data")
+    return names
+
+
+def _catalog_signature(model):
+    data = {
+        "key": model.key,
+        "filename": model.filename,
+        "sha256": model.sha256,
+        "archive": bool(model.archive),
+        "data_sha256": model.data_sha256,
+    }
+    raw = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _expected_hashes(model):
+    names = _file_names(model)
+    if model.archive:
+        return None
+    hashes = {names[0]: model.sha256}
+    if model.data_url:
+        hashes[names[1]] = model.data_sha256
+    return hashes
+
+
+def _remove_marker(model):
+    try:
+        os.remove(marker_path(path_for(model)))
+    except OSError:
+        pass
+
+
+def _write_validation_marker(model, hashes):
+    """Publica atomicamente la marca de una instalacion ya completa."""
+    from atomic_io import escribir_atomico
+
+    directory = models_dir()
+    entries = {}
+    for name in _file_names(model):
+        path = os.path.join(directory, name)
+        entries[name] = {"sha256": hashes[name], **file_state(path)}
+    marker = {
+        "version": MARKER_VERSION,
+        "modelo": model.key,
+        "principal": model.filename,
+        "catalogo": _catalog_signature(model),
+        "archivos": entries,
+    }
+
+    def write(temp_path):
+        with open(temp_path, "w", encoding="utf-8", newline="\n") as output:
+            json.dump(marker, output, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"))
+        return True
+
+    if not escribir_atomico(marker_path(path_for(model)), write):
+        raise OSError(t("ai.models.marker_fail"))
+
+
+def verify_installation(model, force=False):
+    """Comprueba el conjunto completo y renueva su marca cuando sea necesario."""
+    files = _disk_files(model)
+    if not all(os.path.isfile(path) for path in files):
+        _remove_marker(model)
+        return False
+
+    marker = load_marker(path_for(model))
+    marker_matches_catalog = bool(
+        marker and marker.get("modelo") == model.key and
+        marker.get("catalogo") == _catalog_signature(model) and
+        set(marker["archivos"]) == set(_file_names(model)))
+    if marker_matches_catalog and not force and marker_stats_match(path_for(model), marker):
+        return True
+
+    expected = _expected_hashes(model)
+    if expected is None:
+        # En un ZIP el catalogo conoce el hash del archivo contenedor. Una vez
+        # extraido, los hashes fiables son los que se guardaron al instalarlo.
+        if not marker_matches_catalog:
+            _remove_marker(model)
+            return False
+        expected = {name: info["sha256"]
+                    for name, info in marker["archivos"].items()}
+
+    actual = {}
+    try:
+        for name, expected_hash in expected.items():
+            path = os.path.join(models_dir(), name)
+            digest = _sha256_of(path)
+            if not expected_hash or digest.lower() != expected_hash.lower():
+                _remove_marker(model)
+                return False
+            actual[name] = digest
+        _write_validation_marker(model, actual)
+    except OSError:
+        _remove_marker(model)
+        return False
+    return True
+
+
+def _extract_model_zip(zip_path, model, destination, token=None):
+    """Extrae el conjunto exacto en una carpeta privada, nunca sobre el activo."""
+    expected = set(_file_names(model))
+    found = {}
+    max_total = max(int(model.size_bytes or 0) * 3, 64 << 20)
+    total = 0
+    with zipfile.ZipFile(zip_path) as archive:
+        for info in archive.infolist():
+            name = os.path.basename(info.filename)
+            if name not in expected:
+                continue
+            if name in found or info.is_dir() or info.flag_bits & 0x1:
+                raise RuntimeError(t("ai.models.archive_invalid"))
+            total += info.file_size
+            if total > max_total:
+                raise RuntimeError(t("ai.models.archive_invalid"))
+            target = os.path.join(destination, name)
+            with archive.open(info) as source, open(target, "wb") as output:
+                while True:
+                    if token is not None and token.cancelled:
+                        return False
+                    block = source.read(1 << 20)
+                    if not block:
+                        break
+                    output.write(block)
+                output.flush()
+                os.fsync(output.fileno())
+            found[name] = target
+    if set(found) != expected:
+        raise RuntimeError(t("ai.models.archive_invalid"))
+    return True
+
+
+def _validate_staged(model, directory):
+    """Devuelve los hashes reales si la descarga preparada es coherente."""
+    expected = _expected_hashes(model)
+    actual = {}
+    for name in _file_names(model):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            raise RuntimeError(t("ai.models.install_incomplete"))
+        digest = _sha256_of(path)
+        if expected is not None and digest.lower() != expected[name].lower():
+            raise RuntimeError(t("ai.models.hash_fail"))
+        actual[name] = digest
+    return actual
+
+
+def _publish_install(model, staging, hashes):
+    """Publica el conjunto validado; ante error restaura la instalacion anterior."""
+    # Cerrar primero cualquier descriptor de ONNX Runtime: Windows no permite
+    # reemplazar un fichero que siga abierto.
+    clear_sessions()
+    destination = models_dir()
+    names = _file_names(model)
+    live = {name: os.path.join(destination, name) for name in names}
+    backups = {}
+    marker = marker_path(path_for(model))
+    published = []
+    try:
+        for index, path in enumerate(list(live.values()) + [marker]):
+            if os.path.isfile(path):
+                backup = os.path.join(staging, ".anterior-%d" % index)
+                os.replace(path, backup)
+                backups[path] = backup
+        # El ONNX se publica el ultimo: nunca apunta durante la publicacion a
+        # un companion antiguo. La marca, que declara la instalacion util, va despues.
+        for name in names[1:] + names[:1]:
+            os.replace(os.path.join(staging, name), live[name])
+            published.append(live[name])
+        _write_validation_marker(model, hashes)
+    except Exception:
+        if marker in backups or published:
+            _remove_marker(model)
+        for path in reversed(published):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        for path, backup in backups.items():
+            try:
+                os.replace(backup, path)
+            except OSError:
+                pass
+        raise
 
 
 def _download_verify(url, dest, sha256, token, report_progress):
@@ -379,37 +570,45 @@ def make_download_task(model):
                                  default="Modelo pendiente de configurar."))
         final = path_for(model)
         report_progress(0)
-
-        if model.archive:
-            # ZIP con datos externos: descargar, verificar y extraer .onnx/.data.
-            zip_dest = final + ".zip"
-            try:
-                if not _download_verify(model.url, zip_dest, model.sha256, token, report_progress):
+        staging = tempfile.mkdtemp(prefix=".%s-" % model.key, dir=models_dir())
+        try:
+            if model.archive:
+                zip_dest = os.path.join(staging, "descarga.zip")
+                if not _download_verify(model.url, zip_dest, model.sha256, token,
+                                        report_progress):
                     return None
-                _extract_model_zip(zip_dest, model)
-            finally:
-                if os.path.isfile(zip_dest):
-                    try:
-                        os.remove(zip_dest)
-                    except OSError:
-                        pass
+                try:
+                    if not _extract_model_zip(zip_dest, model, staging, token):
+                        return None
+                except zipfile.BadZipFile as exc:
+                    raise RuntimeError(t("ai.models.archive_invalid")) from exc
+                try:
+                    os.remove(zip_dest)
+                except OSError:
+                    pass
+            elif model.data_url:
+                data_dest = os.path.join(staging, model.filename + ".data")
+                if not _download_verify(model.data_url, data_dest, model.data_sha256,
+                                        token, lambda p: report_progress(min(98, p))):
+                    return None
+                main_dest = os.path.join(staging, model.filename)
+                if not _download_verify(model.url, main_dest, model.sha256,
+                                        token, lambda p: None):
+                    return None
+            else:
+                main_dest = os.path.join(staging, model.filename)
+                if not _download_verify(model.url, main_dest, model.sha256,
+                                        token, report_progress):
+                    return None
+
+            hashes = _validate_staged(model, staging)
+            _publish_install(model, staging, hashes)
+            if not verify_installation(model, force=True):
+                raise RuntimeError(t("ai.models.install_incomplete"))
             report_progress(100)
             return final
-
-        if model.data_url:
-            # Dos ficheros: primero el .data (grande, el grueso del progreso), y
-            # el .onnx el ULTIMO (asi is_installed solo es True con ambos).
-            if not _download_verify(model.data_url, final + ".data", model.data_sha256,
-                                    token, lambda p: report_progress(min(98, p))):
-                return None
-            if not _download_verify(model.url, final, model.sha256, token, lambda p: None):
-                return None
-        else:
-            if not _download_verify(model.url, final, model.sha256, token, report_progress):
-                return None
-
-        report_progress(100)
-        return final
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
     return task
 
 

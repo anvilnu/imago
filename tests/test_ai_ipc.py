@@ -13,7 +13,7 @@ import numpy as np
 from ai.ipc_arrays import (IPCArrayCancelled, MMAP_MIN_BYTES, pack_arrays,
                            unpack_arrays)
 from ai.runner import CancelToken
-from ai.subproc import InferenceProcessCrash, _accept, _run_isolated
+from ai.subproc import InferenceProcessCrash, _accept, _run_isolated, run_model
 
 
 class _ListenerBloqueado:
@@ -138,6 +138,32 @@ class AIIPCTests(unittest.TestCase):
                         (array,), {}, force_cpu=True, report=None,
                         token=CancelToken())
             self.assertFalse(os.path.exists(ipc_dir))
+
+    def test_error_que_tambien_falla_en_cpu_no_marca_la_gpu(self):
+        with (patch("ai.subproc._use_gpu", return_value=True),
+              patch("ai.subproc._gpu_unsafe_set", return_value=set()),
+              patch("ai.subproc._run_isolated", side_effect=RuntimeError("entrada invalida")),
+              patch("ai.subproc._run_cpu", side_effect=RuntimeError("entrada invalida")),
+              patch("ai.subproc._mark_gpu_unsafe") as mark_unsafe,
+              patch("ai.subproc._mark_gpu_fallback") as mark_fallback):
+            with self.assertRaisesRegex(RuntimeError, "entrada invalida"):
+                run_model("ai.prueba", "procesar")
+
+        mark_unsafe.assert_not_called()
+        mark_fallback.assert_not_called()
+
+    def test_cpu_correcta_confirma_y_persiste_el_fallback_gpu(self):
+        with (patch("ai.subproc._use_gpu", return_value=True),
+              patch("ai.subproc._gpu_unsafe_set", return_value=set()),
+              patch("ai.subproc._run_isolated", side_effect=InferenceProcessCrash()),
+              patch("ai.subproc._run_cpu", return_value="resultado"),
+              patch("ai.subproc._mark_gpu_unsafe") as mark_unsafe,
+              patch("ai.subproc._mark_gpu_fallback") as mark_fallback):
+            result = run_model("ai.prueba", "procesar")
+
+        self.assertEqual(result, "resultado")
+        mark_unsafe.assert_called_once_with("ai.prueba", "procesar")
+        mark_fallback.assert_called_once_with("procesar")
 
 
 if __name__ == "__main__":
