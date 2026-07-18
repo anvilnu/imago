@@ -270,6 +270,9 @@ ai/                     Menú IA: modelos ONNX LOCALES (CPU) + OpenCV clásico.
                         arranca aunque no estén instalados.
   runner.py             InferenceRunner (QThreadPool): inferencia y descargas
                         FUERA del hilo GUI; callbacks siempre en el hilo GUI.
+  ipc_arrays.py         Transporte de arrays grandes por `.npy` mapeados entre
+                        el proceso principal y el worker aislado (sin pickle
+                        proporcional a la imagen; limpieza por tarea).
   model_manager.py      Catálogo de modelos (url + sha256), descarga con
                         verificación y diálogo de gestión. Los .onnx se guardan
                         en la carpeta de datos del usuario (AppDataLocation).
@@ -553,6 +556,15 @@ diera problemas, el usuario puede forzar el backend a mano con
   tienen un `uid` estable durante la ejecución y pueden reordenarse. Si el
   documento se cerró, dejó de ser el activo o su revisión cambió, descarta el
   resultado; nunca lo redirijas al lienzo o a la capa activos en ese momento.
+- **IPC de inferencia aislada:** `ai/subproc.py`/`subproc_worker.py` deben pasar
+  cualquier array NumPy grande mediante `ai/ipc_arrays.py`, no directamente por
+  `Connection.send()` (pickle duplicaría sus bytes). El directorio temporal es
+  exclusivo de una tarea y se elimina siempre DESPUÉS de terminar el hijo, para
+  que Windows no conserve mapas abiertos. Conserva `allow_pickle=False`, valida
+  que todo descriptor permanezca dentro de ese directorio y desliga en el
+  principal los resultados que sobrevivirán a la limpieza. La espera inicial
+  debe sondear el token/proceso y toda copia grande debe comprobar cancelación
+  por bloques; no restaures un `join(120)` ni esperas largas al cerrar Imago.
 - **Objeto flotante transformable** (selección movida, pegado y texto a girar):
   `MoveTool.begin_paste(image, origin=None, history_name="Pegar", tool_id="paste")`
   levanta una imagen como objeto que se mueve/gira/escala con tiradores. El texto

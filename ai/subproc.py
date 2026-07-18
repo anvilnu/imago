@@ -17,7 +17,9 @@ import os
 import sys
 import time
 import secrets
+import shutil
 import subprocess
+import tempfile
 import threading
 
 from i18n import t
@@ -25,6 +27,7 @@ from i18n import t
 # Raiz del proyecto (padre de ai/): cwd del hijo para que "import ai.*" funcione.
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SENTINEL = object()
+_CANCEL_GRACE = 0.5
 
 # Aviso "la GPU fallo y se reintento en CPU": lo marca el hilo de trabajo y lo
 # consume la GUI (hilo principal) para mostrarlo una vez por sesion.
@@ -163,37 +166,48 @@ def _run_isolated(module, func, args, kwargs, force_cpu, report, token):
     resultado, None si se cancelo, o lanza InferenceProcessCrash si el hijo murio sin
     responder (crash nativo). Los ("error", ...) del hijo se relanzan como RuntimeError."""
     from multiprocessing.connection import Listener
-    authkey = secrets.token_bytes(24)
-    listener = Listener(("127.0.0.1", 0), authkey=authkey)
-    host, port = listener.address
-    # Como lanzar el hijo. En desarrollo: "python -m ai.subproc_worker ...". En el
-    # .exe congelado (PyInstaller) no hay python ni "-m": el propio ejecutable se
-    # relanza con la bandera --ai-worker (ver el despacho al principio de main.py).
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "--ai-worker", host, str(port), authkey.hex()]
-        child_cwd = os.path.dirname(sys.executable)
-    else:
-        cmd = [sys.executable, "-m", "ai.subproc_worker", host, str(port), authkey.hex()]
-        child_cwd = _PROJECT_ROOT
-    proc = subprocess.Popen(
-        cmd,
-        cwd=child_cwd,
-        # stdout/stderr al vacio: el hijo NO necesita consola y asi no ensucia la terminal
-        # con los logs de onnxruntime/DirectML (p. ej. el "Non-zero status code ... MatMul"
-        # de LaMa cuando falla en GPU). El error real ya llega al principal por el canal
-        # (mensaje ("error", ...)) y un crash nativo se detecta por el codigo de salida;
-        # para depurar el hijo, quita estas dos redirecciones temporalmente.
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    from ai.ipc_arrays import IPCArrayCancelled, pack_arrays, unpack_arrays
+
+    listener = None
+    proc = None
     conn = None
     cancel_deadline = None
+    ipc_dir = tempfile.mkdtemp(prefix="imago_ai_ipc_")
     try:
-        conn = _accept(listener, timeout=120)
+        authkey = secrets.token_bytes(24)
+        listener = Listener(("127.0.0.1", 0), authkey=authkey)
+        host, port = listener.address
+        # Como lanzar el hijo. En desarrollo: "python -m ai.subproc_worker ...".
+        # En el .exe congelado no hay python ni "-m": se relanza el ejecutable.
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--ai-worker", host, str(port), authkey.hex()]
+            child_cwd = os.path.dirname(sys.executable)
+        else:
+            cmd = [sys.executable, "-m", "ai.subproc_worker",
+                   host, str(port), authkey.hex()]
+            child_cwd = _PROJECT_ROOT
+        proc = subprocess.Popen(
+            cmd, cwd=child_cwd,
+            # El error real llega por el canal; un crash nativo se detecta por
+            # el codigo de salida. El hijo no debe ensuciar la terminal.
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        conn = _accept(listener, timeout=120, proc=proc, token=token)
         if conn is None:
+            if token is not None and token.cancelled:
+                return None
             raise InferenceProcessCrash("no-connect")
-        conn.send({"module": module, "func": func, "args": args,
-                   "kwargs": kwargs, "force_cpu": force_cpu})
+        if token is not None and token.cancelled:
+            return None
+        cancelled = lambda: token is not None and token.cancelled
+        try:
+            packed_args = pack_arrays(args, ipc_dir, "input", cancelled)
+            packed_kwargs = pack_arrays(kwargs, ipc_dir, "input", cancelled)
+        except IPCArrayCancelled:
+            return None
+        conn.send({"module": module, "func": func, "args": packed_args,
+                   "kwargs": packed_kwargs, "force_cpu": force_cpu,
+                   "ipc_dir": ipc_dir})
 
         result = _SENTINEL
         while True:
@@ -211,20 +225,29 @@ def _run_isolated(module, func, args, kwargs, force_cpu, report, token):
                     if report is not None:
                         report(msg[1])
                 elif kind == "result":
-                    result = msg[1]
+                    if token is not None and token.cancelled:
+                        result = None
+                    else:
+                        try:
+                            result = unpack_arrays(
+                                msg[1], ipc_dir, copy_arrays=True,
+                                is_cancelled=cancelled)
+                        except IPCArrayCancelled:
+                            result = None
                     break
                 elif kind == "error":
                     raise RuntimeError(msg[1])
             elif proc.poll() is not None:
                 break                       # el hijo salio sin devolver resultado
-            # Cancelacion: se pide por el canal; si no responde en 3 s, se termina.
+            # Cancelacion: se pide por el canal; si no responde enseguida se
+            # termina. No se deja al cierre de Imago esperando varios segundos.
             if token is not None and token.cancelled:
                 if cancel_deadline is None:
                     try:
                         conn.send("cancel")
                     except Exception:
                         pass
-                    cancel_deadline = time.monotonic() + 3.0
+                    cancel_deadline = time.monotonic() + _CANCEL_GRACE
                 elif time.monotonic() > cancel_deadline:
                     break
 
@@ -239,14 +262,19 @@ def _run_isolated(module, func, args, kwargs, force_cpu, report, token):
                 conn.close()
             except Exception:
                 pass
-        try:
-            listener.close()
-        except Exception:
-            pass
-        _terminate(proc)
+        if listener is not None:
+            try:
+                listener.close()
+            except Exception:
+                pass
+        if proc is not None:
+            _terminate(proc)
+        # En Windows hay que terminar primero el hijo: un memmap abierto impide
+        # borrar su archivo. En POSIX el mismo orden evita temporales huerfanos.
+        _cleanup_ipc_dir(ipc_dir)
 
 
-def _accept(listener, timeout):
+def _accept(listener, timeout, proc=None, token=None):
     """listener.accept() con limite de tiempo (accept() no lo trae de serie). El hijo
     conecta ANTES de importar onnx/cargar el modelo, asi que llega en <1 s; el timeout
     solo cubre un arranque anomalo. Devuelve la conexion o None."""
@@ -260,7 +288,17 @@ def _accept(listener, timeout):
 
     th = threading.Thread(target=_target, daemon=True)
     th.start()
-    th.join(timeout)
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while time.monotonic() < deadline:
+        if "conn" in holder:
+            return holder["conn"]
+        if "err" in holder:
+            break
+        if token is not None and token.cancelled:
+            break
+        if proc is not None and proc.poll() is not None:
+            break
+        th.join(0.05)
     if "conn" in holder:
         return holder["conn"]
     # Timeout: cerrar el listener desbloquea el accept() del hilo (que es daemon).
@@ -277,9 +315,25 @@ def _terminate(proc):
         return
     try:
         proc.terminate()
-        proc.wait(timeout=3)
+        proc.wait(timeout=0.75)
     except Exception:
         try:
             proc.kill()
+            proc.wait(timeout=0.75)
         except Exception:
             pass
+
+
+def _cleanup_ipc_dir(path):
+    """Borra temporales tras cerrar mapas/proceso, con reintento para Windows."""
+    for _attempt in range(3):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            time.sleep(0.05)
+    # No se enmascara un resultado de IA correcto por un antivirus que retenga
+    # brevemente el archivo; un ultimo intento tolerante evita romper el callback.
+    shutil.rmtree(path, ignore_errors=True)

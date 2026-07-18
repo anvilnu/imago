@@ -318,12 +318,29 @@ prioridades críticas, porque afectan a la integridad del documento.
   nuevas de worker, revalidación, debounce, invalidación y parche regional,
   además de la suite completa de 94 pruebas (3 POSIX omitidas en Windows).
 
-- [ ] **Reducir copias en el IPC de IA y hacer rápida la cancelación.** Los
+- [x] **Reducir copias en el IPC de IA y hacer rápida la cancelación.** Los
   arrays grandes se serializan entre procesos y duplican memoria. Valorar
   memoria compartida o archivos mapeados para entrada/salida. Durante la
   espera inicial del worker, comprobar cancelación en vez de poder esperar
   hasta 120 segundos; cerrar Imago debe cancelar y terminar los procesos sin
   bloquear la salida.
+  Completado el 18-07-2026. Los arrays NumPy de 256 KiB o más, también cuando
+  están anidados en listas/tuplas/diccionarios, viajan como descriptores de
+  archivos `.npy` mapeados dentro de un directorio temporal privado por tarea;
+  el socket autenticado conserva pickle solo para control y objetos pequeños.
+  El hijo abre entradas en copia-en-escritura y el principal desliga la salida
+  antes de terminarlo; después se elimina el directorio tanto en éxito como en
+  error, crash nativo o cancelación, respetando el bloqueo de archivos de
+  Windows y la semántica POSIX. En RGB 4000×3000 el mensaje baja de un pickle
+  adicional de 34,3 MiB a un descriptor de 85 bytes (queda una única copia al
+  mapa, medido en 130 ms, en vez de pickle + socket).
+  `_accept()` sondea cada 50 ms el token y la muerte del hijo durante el antiguo
+  timeout de 120 s. Tras conectar, Cancelar concede solo 0,5 s cooperativos y
+  termina el proceso; una cancelación real medida concluyó en 273 ms. Las copias
+  al mapa se trocean a ~16 MiB para consultar el token entre bloques. Cubierto
+  por 5 regresiones nuevas con proceso real, progreso, entrada/salida anidada,
+  espera inicial, error, crash y limpieza; suite completa de 99 pruebas (3
+  POSIX omitidas en Windows).
 
 ### Calidad, seguridad y mantenibilidad
 
