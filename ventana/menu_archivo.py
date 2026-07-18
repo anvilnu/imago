@@ -217,25 +217,33 @@ class AccionesMenuArchivo:
         return None
 
     def _check_recovery(self):
-        """Al arrancar: si la sesión anterior dejó copias de recuperación (cierre
-        inesperado), ofrece recuperarlas. Si se acepta, abre cada documento en su
-        pestaña; si no, descarta las copias."""
+        """Muestra el gestor de las copias dejadas por una sesión interrumpida."""
         if not hasattr(self, 'autosave'):
             return
         entries = self.autosave.pending_entries()
         if not entries:
             return
-        from widgets.custom_titlebar import imago_question
-        from PySide6.QtWidgets import QMessageBox
-        n = len(entries)
-        plural = "s" if n != 1 else ""
-        resp = imago_question(
-            self, t("msg.recover.title"),
-            t("msg.recover.text2", n=n, plural=plural))
-        if resp == QMessageBox.Yes:
-            self._restore_recovery(entries)
-        else:
-            self.autosave.clear()
+        from PySide6.QtWidgets import QDialog
+        from widgets.recovery_manager import RecoveryManagerDialog
+
+        # Desde este momento ninguna limpieza automática puede borrar estas
+        # copias. Cerrar el gestor con la X equivale a conservarlas todas.
+        self.autosave.defer_entries(entries)
+        dialog = RecoveryManagerDialog(entries, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        decisiones = dialog.decisiones()
+        abrir = [entrada for entrada, accion in decisiones if accion == "open"]
+        descartar = [entrada for entrada, accion in decisiones
+                     if accion == "discard"]
+        if descartar:
+            self.autosave.discard_entries(descartar)
+        self._restore_recovery(abrir)
+
+        # Publica en un único manifiesto los lienzos abiertos y las copias que
+        # siguen diferidas; las que no pudieron abrirse también se conservan.
+        self.autosave.snapshot()
 
     def _restore_recovery(self, entries):
         """Reabre en pestañas cada documento de recuperación y lo marca como NO
@@ -247,7 +255,7 @@ class AccionesMenuArchivo:
                 self, lambda report, token, ruta=e["path"]: load_project(
                     ruta, report=report, token=token),
                 t("status.io.loading"))
-            if not completado:
+            if not completado or not data:
                 continue
             title = e.get("title") or t("msg.recovered_default")
             canvas = self.create_new_tab_canvas(data["width"], data["height"], title)
@@ -255,12 +263,14 @@ class AccionesMenuArchivo:
             if e.get("project_path"):
                 canvas.project_path = e["project_path"]
             canvas.recovered_dirty = True   # aún sin guardar de verdad
+            adoptar = getattr(self.autosave, "adopt_recovery", None)
+            if callable(adoptar):
+                adoptar(canvas, e)
             restored += 1
         if restored:
             self._close_pristine_tabs(except_index=self.tabs.currentIndex())
             self.status_bar.showMessage(t("status.recovered", n=restored), 6000)
-            # Consolidar las copias con los nuevos identificadores de pestaña.
-            self.autosave.snapshot()
+        return restored
 
     def _close_pristine_tabs(self, except_index):
         """Cierra las pestañas con lienzos en blanco totalmente intactos:

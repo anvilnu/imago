@@ -314,6 +314,26 @@ _STRINGS = {
     "msg.unsaved.title":      {"es": "Cambios sin guardar", "en": "Unsaved changes", "fr": "Modifications non enregistrées"},
     "msg.unsaved.text":       {"es": "La imagen «{nombre}» tiene cambios sin guardar.\n¿Quieres guardarlos antes de cerrar?", "en": "Image \"{nombre}\" has unsaved changes.\nDo you want to save them before closing?", "fr": "L'image « {nombre} » comporte des modifications non enregistrées.\nVoulez-vous les enregistrer avant de fermer ?"},
     "msg.recover.title":      {"es": "Recuperar trabajo", "en": "Recover work", "fr": "Récupérer le travail"},
+    "recovery.manager.title": {"es": "Gestor de recuperaciones", "en": "Recovery manager", "fr": "Gestionnaire de récupération"},
+    "recovery.manager.intro": {
+        "es": "Imago no se cerró correctamente. Revisa las {n} copias encontradas y elige qué hacer con cada una.",
+        "en": "Imago did not close properly. Review the {n} recovery copies found and choose what to do with each one.",
+        "fr": "Imago ne s’est pas fermé correctement. Examinez les {n} copies de récupération trouvées et choisissez quoi faire pour chacune."
+    },
+    "recovery.manager.keep_note": {
+        "es": "Conservar mantiene la copia para el próximo inicio. Cerrar esta ventana no descarta nada.",
+        "en": "Keep leaves the copy for the next launch. Closing this window does not discard anything.",
+        "fr": "Conserver garde la copie pour le prochain démarrage. Fermer cette fenêtre ne supprime rien."
+    },
+    "recovery.manager.continue": {"es": "Continuar", "en": "Continue", "fr": "Continuer"},
+    "recovery.action.open":   {"es": "Abrir", "en": "Open", "fr": "Ouvrir"},
+    "recovery.action.keep":   {"es": "Conservar", "en": "Keep", "fr": "Conserver"},
+    "recovery.action.discard": {"es": "Descartar", "en": "Discard", "fr": "Supprimer"},
+    "recovery.date":          {"es": "Copia: {date}", "en": "Copy: {date}", "fr": "Copie : {date}"},
+    "recovery.unknown_date":  {"es": "Fecha desconocida", "en": "Unknown date", "fr": "Date inconnue"},
+    "recovery.original_path": {"es": "Original: {path}", "en": "Original: {path}", "fr": "Original : {path}"},
+    "recovery.no_original":   {"es": "Sin archivo original asociado", "en": "No original file associated", "fr": "Aucun fichier d’origine associé"},
+    "recovery.no_preview":    {"es": "Vista previa no disponible", "en": "Preview unavailable", "fr": "Aperçu indisponible"},
     "msg.open.title":         {"es": "Abrir", "en": "Open", "fr": "Ouvrir"},
     "msg.open.not_found":     {"es": "El archivo ya no existe:\n{file_path}", "en": "File no longer exists:\n{file_path}", "fr": "Le fichier n'existe plus :\n{file_path}"},
     "msg.error.open_proj":    {"es": "Error al abrir proyecto", "en": "Error opening project", "fr": "Erreur à l'ouverture du projet"},

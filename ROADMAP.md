@@ -344,12 +344,24 @@ prioridades críticas, porque afectan a la integridad del documento.
 
 ### Calidad, seguridad y mantenibilidad
 
-- [ ] **Añadir pruebas automatizadas headless de los invariantes críticos.**
+- [x] **Añadir pruebas automatizadas headless de los invariantes críticos.**
   Empezar por round-trip `.imago`, recuperación y cancelación de guardado,
   undo/redo, capa+máscara en toda transformación, duplicar/fusionar, grupos,
   exportación animada y callbacks asíncronos sobre capas reordenadas. Añadir
   también archivos corruptos/maliciosos pequeños. La compilación sintáctica no
   protege estas interacciones de estado.
+  Completado el 18-07-2026. La suite `unittest` funciona con Qt `offscreen` y
+  cubre el round-trip y contrato hostil de `.imago`, publicación atómica y
+  cancelación, protección de recuperaciones, undo/redo de píxeles y estructura,
+  las transformaciones conjuntas de capa+máscara, duplicación/rasterización,
+  fusión con opacidad, recorte, efectos y grupos, selección y exportación de
+  fotogramas, y revalidación de callbacks de IA/overlays tras reordenar, editar
+  o cerrar su destino. Los casos de carga incluyen ZIP/JSON/PNG corruptos,
+  campos y versiones desconocidos, límites de memoria, dimensiones incoherentes,
+  ciclos de grupos y entradas ausentes. Validado en Windows 11 con 115 pruebas
+  superadas y 3 pruebas POSIX omitidas automáticamente; estas últimas cubren
+  `umask`, permisos y enlaces simbólicos y quedan pendientes de ejecución física
+  en Linux/CI.
 
 - [ ] **Crear un banco de rendimiento reproducible.** Generar documentos de
   tamaños y números de capas conocidos y medir inicio/movimiento/fin de trazo,
@@ -423,9 +435,22 @@ prioridades críticas, porque afectan a la integridad del documento.
   ciclo oculto, independencia de ventana y alto dinámico, además de la suite
   completa de 106
   pruebas (3 POSIX omitidas en Windows).
-- [ ] **Gestor de recuperaciones.** En vez de una única pregunta global al
+- [x] **Gestor de recuperaciones.** En vez de una única pregunta global al
   arrancar, listar cada copia con nombre, fecha, miniatura y ruta original para
   abrirla, descartarla o conservarla individualmente.
+  Completado el 18-07-2026. El arranque abre un diálogo frameless traducido
+  ES/EN/FR con una tarjeta por copia, miniatura, nombre, fecha local y ruta del
+  archivo original. Cada tarjeta permite Abrir, Conservar o Descartar de forma
+  exclusiva; cerrar el gestor no elimina nada. Las miniaturas se publican como
+  archivos auxiliares atómicos reutilizando la caché reducida de pestañas, sin
+  recomponer el documento durante el autoguardado. Las copias conservadas
+  permanecen en `session.json`, sobreviven a autoguardados y cierres limpios, y
+  una recuperación abierta adopta su identificador anterior para evitar
+  colisiones. Si una carga falla o se cancela, su copia sigue diferida. El
+  manifiesto rechaza nombres que puedan salir de la carpeta de recuperación.
+  Cubierto por 9 regresiones específicas de interfaz, metadatos, decisiones,
+  conservación, descarte, adopción y rutas, además de la suite completa de 115
+  pruebas (3 POSIX omitidas en Windows).
 
 ## Pendiente (sin fecha)
 

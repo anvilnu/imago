@@ -1663,8 +1663,9 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
                     pass
         # 3. Guardar preferencias (paneles visibles, cuadrícula, reglas)
         self.save_preferences()
-        # 4. Cierre LIMPIO: ya no hay nada que recuperar -> borrar copias y parar
-        # el autoguardado (lo no guardado se gestionó en el paso 1).
+        # 4. Cierre LIMPIO: borrar las copias de las pestañas y parar el
+        # autoguardado. Las recuperaciones que el usuario dejó expresamente en
+        # «Conservar» no pertenecen a ninguna pestaña y el gestor las preserva.
         if hasattr(self, 'autosave'):
             self.autosave.stop()
             self.autosave.clear()

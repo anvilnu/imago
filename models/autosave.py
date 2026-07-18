@@ -3,14 +3,15 @@
 
 Cada N minutos escribe una copia de recuperación (.imago, capas completas) de
 cada pestaña con cambios SIN GUARDAR en una carpeta propia, junto a un manifiesto
-session.json. En un cierre LIMPIO esas copias se borran; si quedaron (la app se
-cerró de forma inesperada), al arrancar se ofrece recuperarlas.
+session.json. En un cierre LIMPIO se borran las copias de las pestañas; las que
+el usuario haya decidido conservar permanecen para el siguiente arranque.
 
 Reutiliza el formato nativo .imago (models.project_io), así que la recuperación
 conserva todas las capas y sus propiedades."""
 
 import os
 import json
+import re
 import weakref
 from datetime import datetime
 from atomic_io import escribir_atomico
@@ -46,6 +47,12 @@ class AutoSaveManager:
         except OSError:
             pass
 
+        # Las copias que el usuario decide conservar sin abrir no pertenecen a
+        # ninguna pestaña. Deben seguir en el manifiesto y sobrevivir incluso a
+        # un cierre limpio posterior.
+        self._entradas_diferidas = []
+        self._counter = max(self._counter, self._ultimo_id_en_disco())
+
         self.timer = QTimer(self.main)
         self.timer.setInterval(max(1, int(interval_min)) * 60 * 1000)
         self.timer.timeout.connect(self.snapshot)
@@ -64,6 +71,83 @@ class AutoSaveManager:
     # ------------------------------------------------------------------ util
     def _session_path(self):
         return os.path.join(self.dir, "session.json")
+
+    def _ultimo_id_en_disco(self):
+        ultimo = 0
+        try:
+            nombres = os.listdir(self.dir)
+        except OSError:
+            return ultimo
+        for nombre in nombres:
+            match = re.fullmatch(r"doc_(\d+)\.imago", nombre)
+            if match:
+                ultimo = max(ultimo, int(match.group(1)))
+        return ultimo
+
+    @staticmethod
+    def _entrada_manifest(entrada):
+        """Quita metadatos calculados que no forman parte de session.json."""
+        salida = {"file": entrada.get("file")}
+        for clave in ("title", "project_path"):
+            valor = entrada.get(clave)
+            if isinstance(valor, str):
+                salida[clave] = valor
+        miniatura = entrada.get("thumbnail")
+        if (isinstance(miniatura, str)
+                and re.fullmatch(r"doc_\d+\.thumb\.png", miniatura)):
+            salida["thumbnail"] = miniatura
+        return salida
+
+    def _entradas_diferidas_validas(self):
+        entradas = []
+        vistos = set()
+        for entrada in getattr(self, "_entradas_diferidas", []):
+            nombre = entrada.get("file", "")
+            if (not isinstance(nombre, str)
+                    or not re.fullmatch(r"doc_\d+\.imago", nombre)
+                    or nombre in vistos
+                    or not os.path.exists(os.path.join(self.dir, nombre))):
+                continue
+            vistos.add(nombre)
+            entradas.append(self._entrada_manifest(entrada))
+        self._entradas_diferidas = entradas
+        return [dict(entrada) for entrada in entradas]
+
+    @staticmethod
+    def _nombres_entrada(entrada):
+        patrones = {
+            "file": r"doc_\d+\.imago",
+            "thumbnail": r"doc_\d+\.thumb\.png",
+        }
+        for clave, patron in patrones.items():
+            nombre = entrada.get(clave)
+            if isinstance(nombre, str) and re.fullmatch(patron, nombre):
+                yield nombre
+
+    def _miniatura_canvas(self, canvas):
+        """Copia la miniatura ya calculada por la barra de pestañas.
+
+        No se fuerza una composición nueva: en documentos grandes supondría un
+        buffer del tamaño completo solo para una vista previa de 150 px.
+        """
+        barra = getattr(self.main, "thumbnail_bar", None)
+        obtener = getattr(barra, "preview_for_canvas", None)
+        if not callable(obtener):
+            return None
+        try:
+            pixmap = obtener(canvas)
+            if pixmap is None or pixmap.isNull():
+                return None
+            return pixmap.toImage()
+        except (AttributeError, RuntimeError):
+            return None
+
+    @staticmethod
+    def _guardar_miniatura(imagen, ruta):
+        if imagen is None or imagen.isNull():
+            return False
+        return escribir_atomico(
+            ruta, lambda temporal: imagen.save(temporal, "PNG"))
 
     def _iter_canvases(self):
         tabs = self.main.tabs
@@ -102,9 +186,12 @@ class AutoSaveManager:
             return None
 
         trabajos = []
-        entries = []
-        keep = set()
-        hay_pendientes = False
+        entries = self._entradas_diferidas_validas()
+        keep = {
+            nombre for entrada in entries
+            for nombre in self._nombres_entrada(entrada)
+        }
+        hay_pendientes = bool(entries)
         for i, canvas in self._iter_canvases():
             if not self._needs_recovery(canvas):
                 continue
@@ -114,6 +201,8 @@ class AutoSaveManager:
                 canvas._autosave_id = self._counter
             fname = "doc_%d.imago" % canvas._autosave_id
             path = os.path.join(self.dir, fname)
+            thumb_name = "doc_%d.thumb.png" % canvas._autosave_id
+            thumb_path = os.path.join(self.dir, thumb_name)
             revision = canvas.revision_autoguardado
             if (getattr(canvas, "_autosave_revision", None) != revision
                     or not os.path.exists(path)):
@@ -121,14 +210,17 @@ class AutoSaveManager:
                     "canvas": weakref.ref(canvas),
                     "revision": revision,
                     "path": path,
+                    "thumbnail_path": thumb_path,
+                    "thumbnail": self._miniatura_canvas(canvas),
                     "snapshot": crear_instantanea_proyecto(canvas),
                 })
             entries.append({
                 "file": fname,
                 "title": self.main.tabs.tabText(i),
                 "project_path": getattr(canvas, "project_path", None),
+                "thumbnail": thumb_name,
             })
-            keep.add(fname)
+            keep.update((fname, thumb_name))
 
         if not hay_pendientes:
             self.clear()
@@ -143,6 +235,9 @@ class AutoSaveManager:
                 if token.cancelled:
                     return None
                 ok = save_project(item["snapshot"], item["path"], token=token)
+                if ok and not token.cancelled:
+                    self._guardar_miniatura(
+                        item["thumbnail"], item["thumbnail_path"])
                 guardados.append((item["canvas"], item["revision"], ok))
                 if not ok:
                     snapshot_completo = False
@@ -206,9 +301,12 @@ class AutoSaveManager:
         La revisión es monotónica e independiente de QUndoStack.index(): dos
         ramas distintas del historial pueden ocupar el mismo índice.
         """
-        entries = []
-        keep = set()
-        hay_pendientes = False
+        entries = self._entradas_diferidas_validas()
+        keep = {
+            nombre for entrada in entries
+            for nombre in self._nombres_entrada(entrada)
+        }
+        hay_pendientes = bool(entries)
         snapshot_completo = True
         for i, canvas in self._iter_canvases():
             if not self._needs_recovery(canvas):
@@ -219,11 +317,15 @@ class AutoSaveManager:
                 canvas._autosave_id = self._counter
             fname = "doc_%d.imago" % canvas._autosave_id
             path = os.path.join(self.dir, fname)
+            thumb_name = "doc_%d.thumb.png" % canvas._autosave_id
+            thumb_path = os.path.join(self.dir, thumb_name)
             revision = canvas.revision_autoguardado
             if (getattr(canvas, "_autosave_revision", None) != revision
                     or not os.path.exists(path)):
                 if save_project(canvas, path):
                     canvas._autosave_revision = revision
+                    self._guardar_miniatura(
+                        self._miniatura_canvas(canvas), thumb_path)
                 else:
                     snapshot_completo = False
             # Si la copia nueva falló pero había una anterior, se conserva y se
@@ -235,8 +337,9 @@ class AutoSaveManager:
                 "file": fname,
                 "title": self.main.tabs.tabText(i),
                 "project_path": getattr(canvas, "project_path", None),
+                "thumbnail": thumb_name,
             })
-            keep.add(fname)
+            keep.update((fname, thumb_name))
 
         if hay_pendientes:
             self._notificar_estado("guardando")
@@ -265,7 +368,9 @@ class AutoSaveManager:
         """Borra las copias .imago de pestañas que ya no necesitan recuperación."""
         try:
             for fn in os.listdir(self.dir):
-                if fn.startswith("doc_") and fn.endswith(".imago") and fn not in keep:
+                es_copia = fn.startswith("doc_") and (
+                    fn.endswith(".imago") or fn.endswith(".thumb.png"))
+                if es_copia and fn not in keep:
                     try:
                         os.remove(os.path.join(self.dir, fn))
                     except OSError:
@@ -273,16 +378,37 @@ class AutoSaveManager:
         except OSError:
             pass
 
-    def clear(self):
-        """Borra TODAS las copias (cierre limpio o nada pendiente de recuperar)."""
+    def clear(self, incluir_diferidas=False):
+        """Limpia copias activas sin destruir recuperaciones conservadas.
+
+        ``incluir_diferidas`` solo se usa para un descarte explícito del usuario.
+        """
+        diferidas = ([] if incluir_diferidas
+                     else self._entradas_diferidas_validas())
+        conservar = {
+            nombre for entrada in diferidas
+            for nombre in self._nombres_entrada(entrada)
+        }
+        if diferidas:
+            conservar.add("session.json")
         try:
             for fn in os.listdir(self.dir):
+                if fn in conservar:
+                    continue
                 try:
                     os.remove(os.path.join(self.dir, fn))
                 except OSError:
                     pass
         except OSError:
             pass
+        if incluir_diferidas:
+            self._entradas_diferidas = []
+        elif diferidas:
+            def _escribir_session(ruta_temporal):
+                with open(ruta_temporal, "w", encoding="utf-8") as f:
+                    json.dump({"entries": diferidas}, f, ensure_ascii=False)
+                return True
+            escribir_atomico(self._session_path(), _escribir_session)
 
     # -------------------------------------------------------------- recuperar
     def pending_entries(self):
@@ -296,11 +422,74 @@ class AutoSaveManager:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError):
             return []
+        if not isinstance(data, dict):
+            return []
+        entradas = data.get("entries", [])
+        if not isinstance(entradas, list):
+            return []
         out = []
-        for e in data.get("entries", []):
-            fp = os.path.join(self.dir, e.get("file", ""))
+        for e in entradas:
+            if not isinstance(e, dict):
+                continue
+            nombre = e.get("file", "")
+            if (not isinstance(nombre, str)
+                    or not re.fullmatch(r"doc_\d+\.imago", nombre)):
+                continue
+            fp = os.path.join(self.dir, nombre)
             if os.path.exists(fp):
-                e = dict(e)
+                e = self._entrada_manifest(e)
                 e["path"] = fp
+                miniatura = e.get("thumbnail")
+                if miniatura:
+                    ruta_miniatura = os.path.join(self.dir, miniatura)
+                    if os.path.exists(ruta_miniatura):
+                        e["thumbnail_path"] = ruta_miniatura
+                try:
+                    e["modified_at"] = os.path.getmtime(fp)
+                except OSError:
+                    e["modified_at"] = None
                 out.append(e)
         return out
+
+    def defer_entries(self, entries):
+        """Conserva copias sin pestaña para otra decisión o sesión."""
+        actuales = {
+            entrada.get("file"): entrada
+            for entrada in self._entradas_diferidas_validas()
+        }
+        for entrada in entries:
+            nombre = entrada.get("file")
+            if (isinstance(nombre, str)
+                    and re.fullmatch(r"doc_\d+\.imago", nombre)
+                    and os.path.exists(os.path.join(self.dir, nombre))):
+                actuales[nombre] = self._entrada_manifest(entrada)
+        self._entradas_diferidas = list(actuales.values())
+
+    def adopt_recovery(self, canvas, entry):
+        """Vincula una copia abierta a su nuevo lienzo sin reescribirla."""
+        nombre = entry.get("file", "")
+        match = (re.fullmatch(r"doc_(\d+)\.imago", nombre)
+                 if isinstance(nombre, str) else None)
+        if match:
+            identificador = int(match.group(1))
+            canvas._autosave_id = identificador
+            self._counter = max(self._counter, identificador)
+        canvas._autosave_revision = canvas.revision_autoguardado
+        self._entradas_diferidas = [
+            diferida for diferida in self._entradas_diferidas_validas()
+            if diferida.get("file") != nombre
+        ]
+
+    def discard_entries(self, entries):
+        """Descarta únicamente las copias elegidas por el usuario."""
+        nombres = {entrada.get("file") for entrada in entries}
+        for entrada in entries:
+            for nombre in self._nombres_entrada(entrada):
+                try:
+                    os.remove(os.path.join(self.dir, nombre))
+                except OSError:
+                    pass
+        self._entradas_diferidas = [
+            diferida for diferida in self._entradas_diferidas_validas()
+            if diferida.get("file") not in nombres
+        ]
