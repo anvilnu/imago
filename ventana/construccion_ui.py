@@ -106,20 +106,13 @@ class ConstruccionUI:
         self.btn_toggle_histogram.setToolTip(t("tooltip.toggle.histogram", default="Mostrar/Ocultar Histograma"))
         layout.addWidget(self.btn_toggle_histogram)
 
-        # 6. Diagnóstico: abre una ventana independiente; no ocupa el splitter.
-        self.btn_document_diagnostics = QToolButton()
-        self.btn_document_diagnostics.setStyleSheet(theme.toolbutton_flat_qss())
-        if QFile.exists(":/icons/layer_properties.png"):
-            self.btn_document_diagnostics.setIcon(
-                crear_icono(":/icons/layer_properties.png"))
-        else:
-            self.btn_document_diagnostics.setText(
-                t("diagnostics.toggle.fallback"))
-        self.btn_document_diagnostics.setToolTip(
-            t("tooltip.toggle.diagnostics"))
-        self.btn_document_diagnostics.clicked.connect(
-            self.open_document_diagnostics)
-        layout.addWidget(self.btn_document_diagnostics)
+        # Espacio pertenece a la mano temporal del lienzo. Estos botones no
+        # deben conservar el foco tras un clic ni interpretar Espacio como otro
+        # clic que abra o cierre accidentalmente un panel.
+        for boton in (self.btn_toggle_tools, self.btn_toggle_history,
+                      self.btn_toggle_layers, self.btn_toggle_colors,
+                      self.btn_toggle_histogram):
+            boton.setFocusPolicy(Qt.NoFocus)
 
         # El contenedor de botones va a la derecha; el hueco libre lo ocupa la tira de miniaturas.
         row_layout.addWidget(container)

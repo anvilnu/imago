@@ -102,7 +102,10 @@ class AccionesMenuVer:
         icon_label = QLabel()
         path = ":/icons/" + icon_filename
         if QFile.exists(path):
-            icon_label.setPixmap(QPixmap(path).scaled(14, 14, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            pixmap = theme.tintar_pixmap(QPixmap(path))
+            icon_label.setPixmap(
+                pixmap.scaled(14, 14, Qt.KeepAspectRatio,
+                              Qt.SmoothTransformation))
         else:
             icon_label.hide()
         lay.addWidget(icon_label)

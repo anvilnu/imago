@@ -287,7 +287,7 @@ class ColorsPanel(QWidget):
             grid_layout.addWidget(btn, index // 8, index % 8)
         main_layout.addLayout(grid_layout)
 
-        # Las muestras personalizadas (guardar color / importar paleta .gpl) ya
+        # Las muestras personalizadas (colecciones e importación multiformato) ya
         # NO viven aqui: se muestran en el selector de color (widgets/color_dialog),
         # debajo de la paleta fija. Siguen persistiendo en QSettings
         # (colors/custom_swatches), asi que el panel y el selector comparten datos.

@@ -313,6 +313,38 @@ _STRINGS = {
     # --- Mensajes (Diálogos) ---
     "msg.unsaved.title":      {"es": "Cambios sin guardar", "en": "Unsaved changes", "fr": "Modifications non enregistrées"},
     "msg.unsaved.text":       {"es": "La imagen «{nombre}» tiene cambios sin guardar.\n¿Quieres guardarlos antes de cerrar?", "en": "Image \"{nombre}\" has unsaved changes.\nDo you want to save them before closing?", "fr": "L'image « {nombre} » comporte des modifications non enregistrées.\nVoulez-vous les enregistrer avant de fermer ?"},
+    "close.unsaved.intro.one": {
+        "es": "Este documento tiene cambios sin guardar. Revisa su vista previa y elige qué hacer antes de cerrar Imago.",
+        "en": "This document has unsaved changes. Review its preview and choose what to do before closing Imago.",
+        "fr": "Ce document contient des modifications non enregistrées. Examinez son aperçu et choisissez quoi faire avant de fermer Imago."
+    },
+    "close.unsaved.intro.many": {
+        "es": "Hay {n} documentos con cambios sin guardar. Revísalos y elige qué hacer antes de cerrar Imago.",
+        "en": "There are {n} documents with unsaved changes. Review them and choose what to do before closing Imago.",
+        "fr": "Il y a {n} documents avec des modifications non enregistrées. Examinez-les et choisissez quoi faire avant de fermer Imago."
+    },
+    "close.unsaved.status": {
+        "es": "Cambios pendientes", "en": "Pending changes",
+        "fr": "Modifications en attente"
+    },
+    "close.unsaved.path": {
+        "es": "Archivo: {path}", "en": "File: {path}",
+        "fr": "Fichier : {path}"
+    },
+    "close.unsaved.no_path": {
+        "es": "Documento nuevo sin archivo asociado",
+        "en": "New document with no associated file",
+        "fr": "Nouveau document sans fichier associé"
+    },
+    "close.unsaved.save_note": {
+        "es": "Guardar procesa todos los documentos. Si un guardado se cancela o falla, Imago permanecerá abierto y conservará el trabajo pendiente.",
+        "en": "Save processes every document. If a save is cancelled or fails, Imago will stay open and preserve the pending work.",
+        "fr": "Enregistrer traite tous les documents. Si un enregistrement est annulé ou échoue, Imago restera ouvert et conservera le travail en attente."
+    },
+    "close.unsaved.return": {
+        "es": "Volver a Imago", "en": "Return to Imago",
+        "fr": "Revenir à Imago"
+    },
     "msg.recover.title":      {"es": "Recuperar trabajo", "en": "Recover work", "fr": "Récupérer le travail"},
     "recovery.manager.title": {"es": "Gestor de recuperaciones", "en": "Recovery manager", "fr": "Gestionnaire de récupération"},
     "recovery.manager.intro": {
@@ -648,6 +680,76 @@ _STRINGS = {
     "color.custom_use_secondary": {"es": "Usar como secundario", "en": "Use as secondary", "fr": "Utiliser comme secondaire"},
     "color.custom_delete":       {"es": "Eliminar muestra", "en": "Delete swatch", "fr": "Supprimer l'échantillon"},
     "color.custom_full":         {"es": "Máximo de muestras alcanzado ({n})", "en": "Swatch limit reached ({n})", "fr": "Limite d'échantillons atteinte ({n})"},
+    "color.custom_delete_all":   {"es": "Eliminar todas", "en": "Delete all", "fr": "Tout supprimer"},
+    "color.custom_delete_all_tip": {
+        "es": "Eliminar todas las muestras propias",
+        "en": "Delete all custom swatches",
+        "fr": "Supprimer tous les échantillons personnels"
+    },
+    "color.custom_delete_all_confirm": {
+        "es": "¿Eliminar las {n} muestras propias? Los conjuntos guardados no se borrarán.",
+        "en": "Delete all {n} custom swatches? Saved collections will not be deleted.",
+        "fr": "Supprimer les {n} échantillons personnels ? Les collections enregistrées ne seront pas supprimées."
+    },
+    "color.collection.save":     {"es": "Guardar conjunto…", "en": "Save collection…", "fr": "Enregistrer l’ensemble…"},
+    "color.collection.save_tip": {"es": "Guardar las muestras actuales con un nombre", "en": "Save the current swatches under a name", "fr": "Enregistrer les échantillons actuels sous un nom"},
+    "color.collection.placeholder": {"es": "Conjuntos guardados…", "en": "Saved collections…", "fr": "Collections enregistrées…"},
+    "color.collection.load":     {"es": "Cargar", "en": "Load", "fr": "Charger"},
+    "color.collection.load_tip": {"es": "Reemplazar las muestras actuales por el conjunto elegido", "en": "Replace current swatches with the selected collection", "fr": "Remplacer les échantillons actuels par la collection choisie"},
+    "color.collection.delete":   {"es": "Eliminar", "en": "Delete", "fr": "Supprimer"},
+    "color.collection.delete_tip": {"es": "Eliminar el conjunto guardado elegido", "en": "Delete the selected saved collection", "fr": "Supprimer la collection enregistrée choisie"},
+    "color.collection.name_title": {"es": "Guardar conjunto de muestras", "en": "Save swatch collection", "fr": "Enregistrer la collection d’échantillons"},
+    "color.collection.name_label": {"es": "Nombre del conjunto:", "en": "Collection name:", "fr": "Nom de la collection :"},
+    "color.collection.name_placeholder": {"es": "Por ejemplo, Colores de marca", "en": "For example, Brand colors", "fr": "Par exemple, Couleurs de marque"},
+    "color.collection.overwrite_confirm": {"es": "Ya existe el conjunto «{name}». ¿Quieres reemplazarlo?", "en": "A collection named \"{name}\" already exists. Replace it?", "fr": "La collection « {name} » existe déjà. Voulez-vous la remplacer ?"},
+    "color.collection.load_confirm": {"es": "Cargar «{name}» reemplazará las muestras propias actuales. ¿Continuar?", "en": "Loading \"{name}\" will replace the current custom swatches. Continue?", "fr": "Charger « {name} » remplacera les échantillons personnels actuels. Continuer ?"},
+    "color.collection.delete_confirm": {"es": "¿Eliminar el conjunto guardado «{name}»? Las muestras actuales no cambiarán.", "en": "Delete the saved collection \"{name}\"? Current swatches will not change.", "fr": "Supprimer la collection enregistrée « {name} » ? Les échantillons actuels ne changeront pas."},
+    "color.palette.import":      {"es": "Importar paleta…", "en": "Import palette…", "fr": "Importer une palette…"},
+    "color.palette.import_tip": {
+        "es": "Importar GPL, ASE, ACO, ACT, PAL, HEX, TXT o CSS",
+        "en": "Import GPL, ASE, ACO, ACT, PAL, HEX, TXT or CSS",
+        "fr": "Importer GPL, ASE, ACO, ACT, PAL, HEX, TXT ou CSS"
+    },
+    "color.palette.replace_saved_confirm": {
+        "es": "La paleta actual coincide con el conjunto guardado «{name}». Importar reemplazará las muestras actuales. ¿Continuar?",
+        "en": "The current palette matches the saved collection \"{name}\". Importing will replace the current swatches. Continue?",
+        "fr": "La palette actuelle correspond à la collection enregistrée « {name} ». L’importation remplacera les échantillons actuels. Continuer ?"
+    },
+    "color.palette.replace_unsaved": {
+        "es": "Las muestras actuales no están guardadas como conjunto. Importar esta paleta las reemplazará. Puedes guardarlas antes de continuar.",
+        "en": "The current swatches are not saved as a collection. Importing this palette will replace them. You can save them before continuing.",
+        "fr": "Les échantillons actuels ne sont pas enregistrés comme collection. L’importation de cette palette les remplacera. Vous pouvez les enregistrer avant de continuer."
+    },
+    "color.palette.save_current": {
+        "es": "Guardar la actual…", "en": "Save current…",
+        "fr": "Enregistrer l’actuelle…"
+    },
+    "color.palette.replace_without_saving": {
+        "es": "Reemplazar sin guardar", "en": "Replace without saving",
+        "fr": "Remplacer sans enregistrer"
+    },
+    "dlg.palette_open":         {"es": "Importar paleta de colores", "en": "Import color palette", "fr": "Importer une palette de couleurs"},
+    "dlg.filter.palettes": {
+        "es": "Paletas compatibles (*.gpl *.ase *.aco *.act *.pal *.txt *.hex *.css);;GIMP (*.gpl);;Adobe (*.ase *.aco *.act);;PAL (*.pal);;Texto y CSS (*.txt *.hex *.css)",
+        "en": "Supported palettes (*.gpl *.ase *.aco *.act *.pal *.txt *.hex *.css);;GIMP (*.gpl);;Adobe (*.ase *.aco *.act);;PAL (*.pal);;Text and CSS (*.txt *.hex *.css)",
+        "fr": "Palettes compatibles (*.gpl *.ase *.aco *.act *.pal *.txt *.hex *.css);;GIMP (*.gpl);;Adobe (*.ase *.aco *.act);;PAL (*.pal);;Texte et CSS (*.txt *.hex *.css)"
+    },
+    "msg.palette.invalid": {
+        "es": "No se ha podido leer el archivo como una paleta compatible.",
+        "en": "The file could not be read as a supported palette.",
+        "fr": "Le fichier n’a pas pu être lu comme une palette compatible."
+    },
+    "msg.palette.empty": {
+        "es": "La paleta no contiene colores que se puedan importar.",
+        "en": "The palette contains no colors that can be imported.",
+        "fr": "La palette ne contient aucune couleur pouvant être importée."
+    },
+    "status.palette_imported": {"es": "Paleta importada: {n} colores", "en": "Palette imported: {n} colors", "fr": "Palette importée : {n} couleurs"},
+    "status.custom_deleted_all": {"es": "Se han eliminado todas las muestras propias", "en": "All custom swatches were deleted", "fr": "Tous les échantillons personnels ont été supprimés"},
+    "status.collection_saved": {"es": "Conjunto guardado: {name}", "en": "Collection saved: {name}", "fr": "Collection enregistrée : {name}"},
+    "status.collection_loaded": {"es": "Conjunto cargado: {name}", "en": "Collection loaded: {name}", "fr": "Collection chargée : {name}"},
+    "status.collection_deleted": {"es": "Conjunto eliminado: {name}", "en": "Collection deleted: {name}", "fr": "Collection supprimée : {name}"},
+    "status.collection_full": {"es": "Máximo de conjuntos guardados alcanzado ({n})", "en": "Saved collection limit reached ({n})", "fr": "Limite de collections enregistrées atteinte ({n})"},
     "dlg.gpl_open":              {"es": "Importar paleta GIMP", "en": "Import GIMP palette", "fr": "Importer une palette GIMP"},
     "dlg.filter.gpl":            {"es": "Paleta de GIMP (*.gpl)", "en": "GIMP palette (*.gpl)", "fr": "Palette GIMP (*.gpl)"},
     "status.gpl_imported":       {"es": "Paleta importada: {n} colores nuevos", "en": "Palette imported: {n} new colors", "fr": "Palette importée : {n} nouvelles couleurs"},
@@ -1806,7 +1908,6 @@ _STRINGS = {
 
     # --- Histograma en vivo (overlay + botón de la fila de toggles) ---
     "tooltip.toggle.histogram": {"es": "Mostrar/Ocultar Histograma", "en": "Show/Hide Histogram", "fr": "Afficher/Masquer l'histogramme"},
-    "tooltip.toggle.diagnostics": {"es": "Abrir Diagnóstico del documento", "en": "Open Document diagnostics", "fr": "Ouvrir le diagnostic du document"},
     "histogram.title":          {"es": "Histograma", "en": "Histogram", "fr": "Histogramme"},
     "histogram.channel":        {"es": "Canal:", "en": "Channel:", "fr": "Canal :"},
     "histogram.lum":            {"es": "Luminosidad", "en": "Luminosity", "fr": "Luminosité"},
@@ -1819,7 +1920,6 @@ _STRINGS = {
     "histogram.range":          {"es": "Rango {a}–{b} · {pct} %", "en": "Range {a}–{b} · {pct} %", "fr": "Plage {a}–{b} · {pct} %"},
     "diagnostics.window_title": {"es": "Diagnóstico del documento", "en": "Document diagnostics", "fr": "Diagnostic du document"},
     "menu.view.diagnostics":    {"es": "Diagnóstico del documento...", "en": "Document diagnostics...", "fr": "Diagnostic du document..."},
-    "diagnostics.toggle.fallback": {"es": "ⓘ", "en": "ⓘ", "fr": "ⓘ"},
     "diagnostics.not_available": {"es": "—", "en": "—", "fr": "—"},
     "diagnostics.dimensions":   {"es": "Dimensiones", "en": "Dimensions", "fr": "Dimensions"},
     "diagnostics.dimensions.value": {"es": "{width} × {height} px · {mp} MP", "en": "{width} × {height} px · {mp} MP", "fr": "{width} × {height} px · {mp} MP"},

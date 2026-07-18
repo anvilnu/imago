@@ -30,6 +30,13 @@ class PenTool(BaseTool):
         self._kernel_cache = {}
         self._coverage_active = False
         self._dirty_rect = None   # caja semiabierta conocida de todo el trazo
+        self._event_dirty_rect = None  # caja del último evento (repintado ROI)
+        # En máscaras Grayscale8, construir/rasterizar un QRadialGradient por
+        # estampa domina los segmentos largos. Se conserva una sola punta
+        # pre-rasterizada por configuración; dibujarla produce los mismos bytes.
+        self._mask_stamp_key = None
+        self._mask_stamp_image = None
+        self._mask_stamp_center = 0
         # 📐 Último punto pintado (persiste entre trazos): con Mayúsculas pulsada,
         # el siguiente clic traza una LÍNEA RECTA desde aquí hasta el nuevo punto.
         self._last_end_point = None
@@ -100,6 +107,7 @@ class PenTool(BaseTool):
         self.image_before_stroke = QImage(target)
         self.distance_carried = 0.0
         self._dirty_rect = None
+        self._event_dirty_rect = None
 
         # El motor de cobertura (BGRA) no aplica al pintar en la máscara.
         self._coverage_active = self._use_coverage() and not self._paint_on_mask
@@ -121,7 +129,7 @@ class PenTool(BaseTool):
             self.canvas.apply_selection_clip(painter)  # ✂️ Pintar solo dentro de la selección
             self.draw_stroke(painter, start, click)
             painter.end()
-        self.canvas.update()
+        self._actualizar_region_del_evento()
 
     def mouse_move(self, event):
         if self._sel_active():
@@ -133,6 +141,7 @@ class PenTool(BaseTool):
             return
         zoom = self.canvas.zoom_factor
         current_point = (event.position() / zoom).toPoint()
+        self._event_dirty_rect = None
 
         if self._coverage_active:
             self._coverage_stroke(self.last_point, current_point)
@@ -144,7 +153,7 @@ class PenTool(BaseTool):
             painter.end()
 
         self.last_point = current_point
-        self.canvas.update()
+        self._actualizar_region_del_evento()
 
     def mouse_release(self, event):
         if self._sel_active():
@@ -179,6 +188,20 @@ class PenTool(BaseTool):
         self._kernel_cache = {}
         self._coverage_active = False
         self._dirty_rect = None
+        self._event_dirty_rect = None
+
+    def _actualizar_region_del_evento(self):
+        """Solicita el repintado del parche tocado en la muestra actual."""
+        rect = self._event_dirty_rect
+        self._event_dirty_rect = None
+        if rect is None:
+            return
+        self.canvas.actualizar_region_pintada(
+            rect,
+            layer_index=self.canvas.active_layer_index,
+            target=("mask" if getattr(self, "_paint_on_mask", False)
+                    else "image"),
+        )
 
     def _marcar_rect_sucio(self, x0, y0, x1, y1):
         """Acumula una caja semiabierta conservadora, limitada al destino."""
@@ -196,6 +219,14 @@ class PenTool(BaseTool):
             self._dirty_rect = [x0, y0, x1, y1]
         else:
             rect = self._dirty_rect
+            rect[0] = min(rect[0], x0)
+            rect[1] = min(rect[1], y0)
+            rect[2] = max(rect[2], x1)
+            rect[3] = max(rect[3], y1)
+        if self._event_dirty_rect is None:
+            self._event_dirty_rect = [x0, y0, x1, y1]
+        else:
+            rect = self._event_dirty_rect
             rect[0] = min(rect[0], x0)
             rect[1] = min(rect[1], y0)
             rect[2] = max(rect[2], x1)
@@ -503,6 +534,13 @@ class PenTool(BaseTool):
         shape = self._brush_shape()
 
         if pattern_type in (None, 'solid', Qt.BrushStyle.SolidPattern):
+            if (type(self) is PenTool
+                    and getattr(self, '_paint_on_mask', False)):
+                stamp, center = self._mask_solid_stamp(
+                    radius, color, hardness, shape)
+                painter.drawImage(point.x() - center,
+                                  point.y() - center, stamp)
+                return
             # --- Relleno estándar con dureza ---
             gradient = QRadialGradient(point.x(), point.y(), radius)
             hardness_factor = hardness / 100.0
@@ -548,6 +586,51 @@ class PenTool(BaseTool):
 
         # La punta se dibuja como path (el patrón/gradiente rellena su interior)
         painter.drawPath(self._shape_path(point, radius, shape))
+
+    def _mask_solid_stamp(self, radius, color, hardness, shape):
+        """Punta sólida cacheada para pintar sobre ``Grayscale8``.
+
+        Se rasteriza con el mismo gradiente, path y antialias que el camino
+        directo. QPainter convierte después su color al gris de la máscara al
+        hacer el blit, conservando también el alfa y la acumulación existentes.
+        """
+        antialias = self._stroke_antialias()
+        key = (round(float(radius), 3), color.rgba(), int(hardness),
+               shape, bool(antialias))
+        if self._mask_stamp_key == key and self._mask_stamp_image is not None:
+            return self._mask_stamp_image, self._mask_stamp_center
+
+        center = int(math.ceil(radius)) + 1
+        side = center * 2 + 1
+        stamp = QImage(side, side, QImage.Format.Format_ARGB32_Premultiplied)
+        stamp.fill(Qt.GlobalColor.transparent)
+        p = QPainter(stamp)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, antialias)
+        centro = QPoint(center, center)
+        gradient = QRadialGradient(centro.x(), centro.y(), radius)
+        hardness_factor = hardness / 100.0
+        gradient.setColorAt(0, color)
+        if hardness_factor < 1.0:
+            if hardness_factor > 0:
+                gradient.setColorAt(hardness_factor, color)
+            steps = 8
+            for i in range(1, steps + 1):
+                k = i / steps
+                pos = hardness_factor + (1.0 - hardness_factor) * k
+                gradient.setColorAt(pos, QColor(
+                    color.red(), color.green(), color.blue(),
+                    int(color.alpha() * ((1.0 - k) ** 3))))
+        else:
+            gradient.setColorAt(1.0, color)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(gradient))
+        p.drawPath(self._shape_path(centro, radius, shape))
+        p.end()
+
+        self._mask_stamp_key = key
+        self._mask_stamp_image = stamp
+        self._mask_stamp_center = center
+        return stamp, center
 
 
 class PencilTool(PenTool):
@@ -597,12 +680,13 @@ class PencilTool(PenTool):
         self.image_before_stroke = QImage(target)
         self.distance_carried = 0.0
         self._dirty_rect = None
+        self._event_dirty_rect = None
 
         painter = QPainter(target)
         self.canvas.apply_selection_clip(painter)
         self.draw_stroke(painter, start, click, skip_first=False)
         painter.end()
-        self.canvas.update()
+        self._actualizar_region_del_evento()
 
     def mouse_move(self, event):
         if not (event.buttons() & (Qt.LeftButton | Qt.RightButton)):
@@ -610,6 +694,7 @@ class PencilTool(PenTool):
         if self.image_before_stroke is None:
             return
         current_point = self._pixel_under(event)
+        self._event_dirty_rect = None
 
         painter = QPainter(self.canvas.paint_target())
         self.canvas.apply_selection_clip(painter)
@@ -619,7 +704,7 @@ class PencilTool(PenTool):
         painter.end()
 
         self.last_point = current_point
-        self.canvas.update()
+        self._actualizar_region_del_evento()
 
     def _shape_offsets(self, size, shape):
         """Offsets (dx,dy) de una punta DURA de diámetro 'size' con la forma dada.
@@ -924,6 +1009,7 @@ class ReplaceColorTool(PenTool):
         self.distance_carried = 0.0
         self._kernel_cache = {}
         self._dirty_rect = None
+        self._event_dirty_rect = None
 
         # Imagen de muestreo: capa activa o composición de todas las capas
         # (fondo TRANSPARENTE, como varita/cubo: el blanco por defecto
@@ -944,7 +1030,7 @@ class ReplaceColorTool(PenTool):
         self._coverage = CoberturaDispersa(W, H)
         self._match = self._build_match_mask(src)
         self._rc_stamp(point)
-        self.canvas.update()
+        self._actualizar_region_del_evento()
 
     def mouse_move(self, event):
         if not (event.buttons() & (Qt.LeftButton | Qt.RightButton)):
@@ -953,9 +1039,10 @@ class ReplaceColorTool(PenTool):
             return
         zoom = self.canvas.zoom_factor
         current = (event.position() / zoom).toPoint()
+        self._event_dirty_rect = None
         self._rc_stroke(self.last_point, current)
         self.last_point = current
-        self.canvas.update()
+        self._actualizar_region_del_evento()
 
     def mouse_release(self, event):
         super().mouse_release(event)   # registra el PaintCommand y limpia buffers

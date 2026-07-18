@@ -23,17 +23,22 @@ Clic izquierdo en una muestra -> la usa como color en edicion; clic derecho -> e
 reves).
 """
 
+import json
 import math
+import os
 
 import numpy as np
-from PySide6.QtWidgets import (QWidget, QLabel, QSpinBox, QLineEdit, QPushButton,
-                               QHBoxLayout, QVBoxLayout, QGridLayout)
+from PySide6.QtWidgets import (QComboBox, QWidget, QLabel, QSpinBox, QLineEdit,
+                               QPushButton, QHBoxLayout, QVBoxLayout,
+                               QGridLayout)
 from PySide6.QtGui import QColor, QPainter, QPen, QLinearGradient, QImage, QIcon
 from PySide6.QtCore import Qt, Signal, QPointF, QSize, QFile, QEvent, QTimer
 
 from widgets.overlay_panel import OverlayPanel
+from widgets.custom_titlebar import FramelessDialog, ImagoMessageBox
 from widgets.colors_panel import ColorSwatch, _DefaultColorsIcon, _paint_checker
 from i18n import t
+from palette_io import cargar_paleta
 import theme
 
 
@@ -44,6 +49,107 @@ _PRESETS = [
     "#FF00FF", "#800080", "#804000", "#808000", "#A04000", "#FF8080",
     "#FFC080", "#FFFF80", "#80FF80", "#80FFFF", "#8080FF", "#FF80FF",
 ]
+
+_IMPORTAR_GUARDAR = "guardar"
+_IMPORTAR_REEMPLAZAR = "reemplazar"
+_IMPORTAR_CANCELAR = "cancelar"
+
+
+def _decodificar_colecciones(crudo, max_muestras=96, max_colecciones=50):
+    """Valida el JSON de QSettings sin confiar en sus tipos ni contenido."""
+    try:
+        datos = json.loads(str(crudo or ""))
+    except (TypeError, ValueError):
+        return []
+    elementos = datos.get("collections", []) if isinstance(datos, dict) else []
+    if not isinstance(elementos, list):
+        return []
+    salida = []
+    nombres = set()
+    for elemento in elementos:
+        if not isinstance(elemento, dict):
+            continue
+        nombre = str(elemento.get("name", "")).strip()[:80]
+        clave = nombre.casefold()
+        if not nombre or clave in nombres:
+            continue
+        crudos = elemento.get("colors", [])
+        if not isinstance(crudos, list):
+            continue
+        colores = []
+        vistos = set()
+        for valor in crudos:
+            color = QColor(str(valor))
+            if not color.isValid() or color.rgba() in vistos:
+                continue
+            vistos.add(color.rgba())
+            colores.append(color)
+            if len(colores) >= max_muestras:
+                break
+        salida.append({"name": nombre, "colors": colores})
+        nombres.add(clave)
+        if len(salida) >= max_colecciones:
+            break
+    return salida
+
+
+def _codificar_colecciones(colecciones):
+    datos = {
+        "version": 1,
+        "collections": [
+            {
+                "name": coleccion["name"],
+                "colors": [color.name(QColor.HexArgb)
+                           for color in coleccion["colors"]],
+            }
+            for coleccion in colecciones
+        ],
+    }
+    return json.dumps(datos, ensure_ascii=False, separators=(",", ":"))
+
+
+class _NombreColeccionDialog(FramelessDialog):
+    """Pide el nombre de un conjunto sin recurrir a QInputDialog nativo."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(t("color.collection.name_title"))
+        self._body.setFixedWidth(330)
+        self.setStyleSheet(
+            "QLabel { color: %s; }" % theme.TEXT
+            + theme.lineedit_qss()
+        )
+
+        self.editor = QLineEdit()
+        self.editor.setMaxLength(80)
+        self.editor.setPlaceholderText(t("color.collection.name_placeholder"))
+        self.body_layout.addWidget(QLabel(t("color.collection.name_label")))
+        self.body_layout.addWidget(self.editor)
+
+        pie = QHBoxLayout()
+        pie.addStretch(1)
+        cancelar = QPushButton(t("dlg.cancel"))
+        cancelar.setObjectName("CollectionNameCancel")
+        cancelar.setStyleSheet(theme.dialog_button_qss(
+            "QPushButton#CollectionNameCancel"))
+        cancelar.clicked.connect(self.reject)
+        pie.addWidget(cancelar)
+        self.guardar = QPushButton(t("msg.save"))
+        self.guardar.setObjectName("CollectionNameSave")
+        self.guardar.setStyleSheet(theme.dialog_button_qss(
+            "QPushButton#CollectionNameSave"))
+        self.guardar.setDefault(True)
+        self.guardar.setEnabled(False)
+        self.guardar.clicked.connect(self.accept)
+        pie.addWidget(self.guardar)
+        self.body_layout.addLayout(pie)
+
+        self.editor.textChanged.connect(
+            lambda texto: self.guardar.setEnabled(bool(texto.strip())))
+        self.editor.setFocus()
+
+    def nombre(self):
+        return self.editor.text().strip()
 
 
 def _hsv_to_rgb_arrays(h, s, v):
@@ -380,9 +486,9 @@ class _ColorEditorMixin:
         layout.addLayout(swatches)
 
         # ── Muestras personalizadas (persistentes en QSettings) ──
-        # Debajo de la paleta fija: el usuario guarda el color actual con "+" o
-        # importa una paleta de GIMP (.gpl) con "…". Se comparten entre las dos
-        # variantes del selector (viven en QSettings, no en el panel de color).
+        # Debajo de la paleta fija: muestras propias, conjuntos con nombre e
+        # importación multiformato. Se comparten entre las dos variantes del
+        # selector (viven en QSettings, no en el panel de color).
         self._build_custom_swatches(layout)
 
         # ── Botones: solo en modo MODAL (en vivo se aplica al momento) ──
@@ -558,11 +664,11 @@ class _ColorEditorMixin:
             self._refresh_boxes()
 
     # -------------------------------------------------- muestras personalizadas
-    MAX_MUESTRAS = 96   # tope para que la rejilla no crezca sin fin
+    MAX_MUESTRAS = 96       # tope para que la rejilla no crezca sin fin
+    MAX_COLECCIONES = 50    # evita un QSettings sin límite práctico
 
     def _build_custom_swatches(self, layout):
-        """Monta la cabecera (etiqueta + botones "+"/"…") y la rejilla de muestras
-        propias. Solo si hay ventana principal (de ahi salen QSettings/status_bar)."""
+        """Monta muestras, acciones masivas y colecciones con nombre."""
         if self._main_window is None:
             self.custom_grid = None
             return
@@ -570,25 +676,55 @@ class _ColorEditorMixin:
         fila.setSpacing(4)
         fila.addWidget(QLabel(t("color.custom")))
         fila.addStretch()
-        # padding:0 anula el 'padding: 5px 14px' que el selector suelto hereda de
-        # dialog_button_plain_qss(): en un boton de 18x18 dejaba el "+"/"…" sin
-        # sitio (se veian vacios). El editor en vivo no hereda ese padding.
+        # padding:0 anula el padding que el selector suelto hereda de los
+        # botones de diálogo: en un botón de 20x20 dejaría el «+» sin sitio.
         btn_qss = theme.panel_action_button_qss() + " QPushButton { padding: 0px; }"
         self.btn_add_swatch = QPushButton("+")
-        self.btn_add_swatch.setFixedSize(18, 18)
+        self.btn_add_swatch.setFixedSize(20, 20)
         self.btn_add_swatch.setCursor(Qt.PointingHandCursor)
         self.btn_add_swatch.setToolTip(t("color.custom_add_tip"))
         self.btn_add_swatch.setStyleSheet(btn_qss)
         self.btn_add_swatch.clicked.connect(self.add_custom_swatch)
         fila.addWidget(self.btn_add_swatch)
-        self.btn_import_gpl = QPushButton("…")
-        self.btn_import_gpl.setFixedSize(18, 18)
-        self.btn_import_gpl.setCursor(Qt.PointingHandCursor)
-        self.btn_import_gpl.setToolTip(t("color.custom_import_tip"))
-        self.btn_import_gpl.setStyleSheet(btn_qss)
-        self.btn_import_gpl.clicked.connect(self.import_gpl_palette)
-        fila.addWidget(self.btn_import_gpl)
+        self.btn_delete_all = self._boton_muestras(
+            "DeleteAllSwatches", t("color.custom_delete_all"),
+            self.delete_all_custom_swatches,
+            t("color.custom_delete_all_tip"))
+        fila.insertWidget(fila.count() - 1, self.btn_delete_all)
         layout.addLayout(fila)
+
+        acciones = QHBoxLayout()
+        acciones.setSpacing(5)
+        self.btn_save_collection = self._boton_muestras(
+            "SaveSwatchCollection", t("color.collection.save"),
+            self.save_custom_collection,
+            t("color.collection.save_tip"))
+        acciones.addWidget(self.btn_save_collection)
+        self.btn_import_palette = self._boton_muestras(
+            "ImportColorPalette", t("color.palette.import"),
+            self.import_palette, t("color.palette.import_tip"))
+        acciones.addWidget(self.btn_import_palette)
+        layout.addLayout(acciones)
+
+        colecciones = QHBoxLayout()
+        colecciones.setSpacing(5)
+        self.collection_combo = QComboBox()
+        self.collection_combo.setStyleSheet(theme.combobox_qss())
+        self.collection_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.collection_combo.setMinimumContentsLength(13)
+        colecciones.addWidget(self.collection_combo, 1)
+        self.btn_load_collection = self._boton_muestras(
+            "LoadSwatchCollection", t("color.collection.load"),
+            self.load_custom_collection,
+            t("color.collection.load_tip"))
+        colecciones.addWidget(self.btn_load_collection)
+        self.btn_delete_collection = self._boton_muestras(
+            "DeleteSwatchCollection", t("color.collection.delete"),
+            self.delete_custom_collection,
+            t("color.collection.delete_tip"))
+        colecciones.addWidget(self.btn_delete_collection)
+        layout.addLayout(colecciones)
 
         # La rejilla vive en un 'holder' que se RECREA en cada reconstruccion:
         # QGridLayout NO reduce su numero de filas al quitar items, asi que al
@@ -601,7 +737,22 @@ class _ColorEditorMixin:
         layout.addLayout(self._custom_row)
         self.custom_holder = None
         self._custom_colors = self._load_custom_swatches()
+        self._custom_collections = self._load_custom_collections()
+        self._refresh_collection_combo()
+        self.collection_combo.currentIndexChanged.connect(
+            self._update_collection_buttons)
         self._rebuild_custom_swatches()
+
+    def _boton_muestras(self, nombre, texto, callback, tooltip):
+        boton = QPushButton(texto)
+        boton.setObjectName(nombre)
+        boton.setCursor(Qt.PointingHandCursor)
+        boton.setToolTip(tooltip)
+        boton.setStyleSheet(theme.dialog_button_plain_qss(
+            f"QPushButton#{nombre}"))
+        boton.setMinimumHeight(24)
+        boton.clicked.connect(callback)
+        return boton
 
     def _load_custom_swatches(self):
         """Lee las muestras de QSettings (una cadena 'hex,hex,...' en ARGB;
@@ -619,6 +770,80 @@ class _ColorEditorMixin:
         self._main_window.settings.setValue(
             "colors/custom_swatches",
             ",".join(c.name(QColor.HexArgb) for c in self._custom_colors))
+
+    def _load_custom_collections(self):
+        crudo = self._main_window.settings.value(
+            "colors/custom_collections", "")
+        return _decodificar_colecciones(
+            crudo, self.MAX_MUESTRAS, self.MAX_COLECCIONES)
+
+    def _save_custom_collections(self):
+        self._main_window.settings.setValue(
+            "colors/custom_collections",
+            _codificar_colecciones(self._custom_collections))
+
+    def _refresh_collection_combo(self, selected_name=None):
+        self.collection_combo.blockSignals(True)
+        self.collection_combo.clear()
+        self.collection_combo.addItem(t("color.collection.placeholder"), None)
+        indice_seleccionado = 0
+        for indice, coleccion in enumerate(self._custom_collections, start=1):
+            nombre = coleccion["name"]
+            self.collection_combo.addItem(nombre, nombre)
+            if selected_name is not None and nombre.casefold() == selected_name.casefold():
+                indice_seleccionado = indice
+        self.collection_combo.setCurrentIndex(indice_seleccionado)
+        self.collection_combo.blockSignals(False)
+        self._update_collection_buttons()
+
+    def _update_collection_buttons(self, *_args):
+        seleccionada = self.collection_combo.currentData() is not None
+        self.btn_load_collection.setEnabled(seleccionada)
+        self.btn_delete_collection.setEnabled(seleccionada)
+        self.collection_combo.setToolTip(
+            self.collection_combo.currentText() if seleccionada else
+            t("color.collection.placeholder"))
+
+    def _selected_collection(self):
+        nombre = self.collection_combo.currentData()
+        if nombre is None:
+            return None
+        return next((coleccion for coleccion in self._custom_collections
+                     if coleccion["name"] == nombre), None)
+
+    def _confirmar_muestras(self, texto, titulo=None):
+        from PySide6.QtWidgets import QMessageBox
+        from widgets.custom_titlebar import imago_question
+        anterior = getattr(self, "_suppress_block", False)
+        self._suppress_block = True
+        try:
+            respuesta = imago_question(
+                self._main_window, titulo or t("color.custom"), texto,
+                QMessageBox.Yes | QMessageBox.Cancel,
+                default=QMessageBox.Cancel)
+            return respuesta == QMessageBox.Yes
+        finally:
+            self._suppress_block = anterior
+
+    def _mostrar_estado(self, clave, **valores):
+        barra = getattr(self._main_window, "status_bar", None)
+        if barra is not None:
+            barra.showMessage(t(clave, **valores), 4000)
+
+    def _marcar_muestras_modificadas(self):
+        """Una edición manual deja de representar el conjunto seleccionado."""
+        combo = getattr(self, "collection_combo", None)
+        if combo is not None and combo.currentData() is not None:
+            combo.setCurrentIndex(0)
+
+    @staticmethod
+    def _firma_colores(colores):
+        return tuple(color.rgba() for color in colores)
+
+    def _coleccion_que_coincide(self):
+        firma = self._firma_colores(self._custom_colors)
+        return next((coleccion for coleccion in self._custom_collections
+                     if self._firma_colores(coleccion["colors"]) == firma), None)
 
     def _rebuild_custom_swatches(self):
         """Reconstruye la rejilla de muestras propias desde self._custom_colors,
@@ -642,6 +867,8 @@ class _ColorEditorMixin:
                           + "\n" + t("color.custom_swatch_tip"))
             grid.addWidget(sw, i // 12, i % 12)
         self._custom_row.insertWidget(0, self.custom_holder)
+        self.btn_delete_all.setEnabled(bool(self._custom_colors))
+        self.btn_save_collection.setEnabled(bool(self._custom_colors))
         # El overlay se posiciona a mano (no lo gestiona un layout del padre): al
         # crecer/menguar la rejilla hay que reajustar su alto o el contenido se
         # solaparia. Se difiere un tick (QTimer 0) porque justo tras mutar la
@@ -670,6 +897,7 @@ class _ColorEditorMixin:
                 t("color.custom_full", n=self.MAX_MUESTRAS), 4000)
             return
         self._custom_colors.append(QColor(color))
+        self._marcar_muestras_modificadas()
         self._save_custom_swatches()
         self._rebuild_custom_swatches()
 
@@ -689,74 +917,171 @@ class _ColorEditorMixin:
             self._refresh_boxes()
         elif elegido is acc_del:
             del self._custom_colors[index]
+            self._marcar_muestras_modificadas()
             self._save_custom_swatches()
             self._rebuild_custom_swatches()
 
-    def import_gpl_palette(self):
-        """Importa una paleta de GIMP (.gpl): texto plano con lineas 'R G B
-        [nombre]'. Anade los colores que no esten ya, hasta el tope."""
+    def delete_all_custom_swatches(self):
+        if not self._custom_colors:
+            return
+        if not self._confirmar_muestras(t(
+                "color.custom_delete_all_confirm",
+                n=len(self._custom_colors))):
+            return
+        self._custom_colors = []
+        self._marcar_muestras_modificadas()
+        self._save_custom_swatches()
+        self._rebuild_custom_swatches()
+        self._mostrar_estado("status.custom_deleted_all")
+
+    def save_custom_collection(self):
+        if not self._custom_colors:
+            return False
+        anterior = getattr(self, "_suppress_block", False)
+        self._suppress_block = True
+        try:
+            dialogo = _NombreColeccionDialog(self._main_window)
+            if not dialogo.exec():
+                return False
+            nombre = dialogo.nombre()
+            existente = next((coleccion for coleccion in self._custom_collections
+                              if coleccion["name"].casefold() == nombre.casefold()),
+                             None)
+            if existente is not None:
+                from PySide6.QtWidgets import QMessageBox
+                from widgets.custom_titlebar import imago_question
+                respuesta = imago_question(
+                    self._main_window, t("color.collection.name_title"),
+                    t("color.collection.overwrite_confirm", name=existente["name"]),
+                    QMessageBox.Yes | QMessageBox.Cancel,
+                    default=QMessageBox.Cancel)
+                if respuesta != QMessageBox.Yes:
+                    return False
+                existente["name"] = nombre
+                existente["colors"] = [QColor(c) for c in self._custom_colors]
+            else:
+                if len(self._custom_collections) >= self.MAX_COLECCIONES:
+                    self._mostrar_estado(
+                        "status.collection_full", n=self.MAX_COLECCIONES)
+                    return False
+                self._custom_collections.append({
+                    "name": nombre,
+                    "colors": [QColor(c) for c in self._custom_colors],
+                })
+            self._save_custom_collections()
+            self._refresh_collection_combo(nombre)
+            self._mostrar_estado("status.collection_saved", name=nombre)
+            return True
+        finally:
+            self._suppress_block = anterior
+
+    def load_custom_collection(self):
+        coleccion = self._selected_collection()
+        if coleccion is None:
+            return
+        nuevos = [QColor(c) for c in coleccion["colors"]]
+        actuales = [c.rgba() for c in self._custom_colors]
+        if actuales == [c.rgba() for c in nuevos]:
+            return
+        if self._custom_colors and not self._confirmar_muestras(t(
+                "color.collection.load_confirm", name=coleccion["name"])):
+            return
+        self._custom_colors = nuevos[:self.MAX_MUESTRAS]
+        self._save_custom_swatches()
+        self._rebuild_custom_swatches()
+        self._mostrar_estado(
+            "status.collection_loaded", name=coleccion["name"])
+
+    def delete_custom_collection(self):
+        coleccion = self._selected_collection()
+        if coleccion is None or not self._confirmar_muestras(t(
+                "color.collection.delete_confirm", name=coleccion["name"])):
+            return
+        self._custom_collections.remove(coleccion)
+        self._save_custom_collections()
+        self._refresh_collection_combo()
+        self._mostrar_estado(
+            "status.collection_deleted", name=coleccion["name"])
+
+    def import_palette(self):
+        """Abre una paleta y reemplaza las muestras actuales de forma segura."""
         from PySide6.QtWidgets import QFileDialog
+        anterior = getattr(self, "_suppress_block", False)
         # El QFileDialog (y el posible aviso modal) disparan WindowBlocked en la
         # ventana, que normalmente cierra este overlay (ver eventFilter). Se
         # suprime ese autocierre durante la importacion para no operar despues
-        # sobre widgets ya destruidos (y para que el overlay siga abierto y se
-        # vean las muestras importadas).
+        # sobre widgets ya destruidos y para que se vean las muestras importadas.
         self._suppress_block = True
         try:
             ruta, _sel = QFileDialog.getOpenFileName(
-                self._main_window, t("dlg.gpl_open"),
+                self._main_window, t("dlg.palette_open"),
                 getattr(self._main_window, "last_opened_dir", "") or "",
-                t("dlg.filter.gpl"))
+                t("dlg.filter.palettes"))
             if not ruta:
                 return
-            colores = self._parse_gpl(ruta)
+            self._main_window.last_opened_dir = os.path.dirname(ruta)
+            colores = cargar_paleta(ruta)
             if colores is None:
                 from widgets.custom_titlebar import imago_warning
-                imago_warning(self._main_window, t("dlg.gpl_open"), t("msg.gpl.invalid"))
+                imago_warning(
+                    self._main_window, t("dlg.palette_open"),
+                    t("msg.palette.invalid"))
                 return
-            presentes = {c.name(QColor.HexArgb) for c in self._custom_colors}
-            nuevos = 0
-            for c in colores:
-                if len(self._custom_colors) >= self.MAX_MUESTRAS:
-                    break
-                if c.name(QColor.HexArgb) in presentes:
-                    continue
-                self._custom_colors.append(c)
-                presentes.add(c.name(QColor.HexArgb))
-                nuevos += 1
+            importados = [QColor(c) for c in colores[:self.MAX_MUESTRAS]]
+            if not importados:
+                from widgets.custom_titlebar import imago_warning
+                imago_warning(
+                    self._main_window, t("dlg.palette_open"),
+                    t("msg.palette.empty"))
+                return
+            if self._firma_colores(importados) == self._firma_colores(
+                    self._custom_colors):
+                self._mostrar_estado(
+                    "status.palette_imported", n=len(importados))
+                return
+            if self._custom_colors and not self._autorizar_reemplazo_importado():
+                return
+            self._custom_colors = importados
+            self._marcar_muestras_modificadas()
             self._save_custom_swatches()
             self._rebuild_custom_swatches()
-            self._main_window.status_bar.showMessage(
-                t("status.gpl_imported", n=nuevos), 4000)
+            self._mostrar_estado(
+                "status.palette_imported", n=len(importados))
         finally:
-            self._suppress_block = False
+            self._suppress_block = anterior
+
+    def _autorizar_reemplazo_importado(self):
+        guardada = self._coleccion_que_coincide()
+        if guardada is not None:
+            return self._confirmar_muestras(
+                t("color.palette.replace_saved_confirm",
+                  name=guardada["name"]),
+                titulo=t("dlg.palette_open"))
+
+        dialogo = ImagoMessageBox(
+            self._main_window, t("dlg.palette_open"),
+            t("color.palette.replace_unsaved"), "warning", min_width=480)
+        dialogo.add_button(
+            t("color.palette.save_current"), _IMPORTAR_GUARDAR,
+            default=True)
+        dialogo.add_button(
+            t("color.palette.replace_without_saving"),
+            _IMPORTAR_REEMPLAZAR)
+        dialogo.add_button(t("dlg.cancel"), _IMPORTAR_CANCELAR)
+        dialogo.exec()
+        decision = dialogo.value() or _IMPORTAR_CANCELAR
+        if decision == _IMPORTAR_GUARDAR:
+            return bool(self.save_custom_collection())
+        return decision == _IMPORTAR_REEMPLAZAR
+
+    def import_gpl_palette(self):
+        """Alias conservado para integraciones antiguas del selector."""
+        self.import_palette()
 
     @staticmethod
     def _parse_gpl(ruta):
-        """Parsea un .gpl. Devuelve la lista de QColor, o None si el archivo
-        no tiene la cabecera 'GIMP Palette'."""
-        try:
-            with open(ruta, "r", encoding="utf-8", errors="replace") as f:
-                lineas = f.readlines()
-        except OSError:
-            return None
-        if not lineas or "gimp palette" not in lineas[0].strip().lower():
-            return None
-        colores = []
-        for linea in lineas[1:]:
-            linea = linea.strip()
-            if (not linea or linea.startswith("#")
-                    or linea.lower().startswith(("name:", "columns:"))):
-                continue
-            partes = linea.split()
-            if len(partes) < 3:
-                continue
-            try:
-                r, g, b = (max(0, min(255, int(p))) for p in partes[:3])
-            except ValueError:
-                continue
-            colores.append(QColor(r, g, b))
-        return colores
+        """Compatibilidad: la lectura GPL usa ahora el cargador común."""
+        return cargar_paleta(ruta)
 
     # -------------------------------------------------------- modo EN VIVO
     def _panel_color(self, which):
@@ -909,7 +1234,7 @@ class _ColorOverlayBase(_ColorEditorMixin, OverlayPanel):
     def eventFilter(self, obj, event):
         # Cerrarse si un dialogo MODAL bloquea la ventana principal (Preferencias,
         # Nuevo...): no deben convivir dos dialogos. Excepcion: cuando el propio
-        # overlay abre un dialogo modal a proposito (importar paleta .gpl), no
+        # overlay abre un diálogo modal a propósito (gestionar una paleta), no
         # debe autocerrarse (_suppress_block); si lo hiciera, seguiria operando
         # sobre sus widgets ya destruidos al volver.
         if obj is self._top_win and event.type() == QEvent.WindowBlocked:

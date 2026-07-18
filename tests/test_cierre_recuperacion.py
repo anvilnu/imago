@@ -8,6 +8,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QApplication, QMessageBox, QPushButton,
                                QScrollArea, QTabWidget, QWidget)
 from shiboken6 import isValid
@@ -32,6 +33,9 @@ from ventana.menu_archivo import AccionesMenuArchivo, ResultadoGuardado
 from widgets.history_panel import HistoryPanel
 from widgets.layers_panel import LayersPanel
 from widgets.canvas import Canvas
+from widgets.unsaved_documents import (DECISION_DESCARTAR, DECISION_GUARDAR,
+                                       DECISION_VOLVER,
+                                       UnsavedDocumentsDialog)
 
 
 class _SignalFalsa:
@@ -67,7 +71,8 @@ class _MarkerFalso:
 
 class _TabsFalsas:
     def __init__(self, canvas):
-        self.items = [_MarkerFalso(canvas)]
+        canvases = canvas if isinstance(canvas, (list, tuple)) else [canvas]
+        self.items = [_MarkerFalso(item) for item in canvases]
         self.current_index = 0
 
     def widget(self, index):
@@ -77,7 +82,7 @@ class _TabsFalsas:
         self.current_index = index
 
     def tabText(self, index):
-        return "Recuperado.imago"
+        return f"Recuperado {index + 1}.imago"
 
     def removeTab(self, index):
         self.items.pop(index)
@@ -387,30 +392,126 @@ class LiberacionWidgetsPestanaTests(unittest.TestCase):
 
 
 class CierreAplicacionTests(unittest.TestCase):
-    def _cerrar(self, resultado, limpiar_al_guardar=False):
+    def _cerrar(self, resultado, limpiar_al_guardar=False,
+                decision=DECISION_GUARDAR):
         canvas = _CanvasFalso(limpio=True, recuperado=True)
         ventana = _VentanaFalsa(canvas, resultado, limpiar_al_guardar)
         evento = _EventoFalso()
-        with patch("main.imago_warning", return_value=QMessageBox.Save):
+        with patch("main.preguntar_cierre_documentos",
+                   return_value=decision) as dialogo:
             MainWindow.closeEvent(ventana, evento)
-        return ventana, evento
+        return ventana, evento, dialogo
 
     def test_cancelar_o_fallar_guardado_no_borra_autoguardado(self):
         for resultado in (ResultadoGuardado.CANCELADO, ResultadoGuardado.ERROR):
             with self.subTest(resultado=resultado):
-                ventana, evento = self._cerrar(resultado)
+                ventana, evento, _dialogo = self._cerrar(resultado)
                 self.assertTrue(evento.ignorado)
                 self.assertFalse(evento.aceptado)
                 self.assertFalse(ventana.autosave.borrado)
                 self.assertFalse(ventana.autosave.detenido)
 
     def test_guardado_confirmado_permite_cerrar_y_limpiar_recuperacion(self):
-        ventana, evento = self._cerrar(
+        ventana, evento, _dialogo = self._cerrar(
             ResultadoGuardado.EXITO, limpiar_al_guardar=True)
         self.assertTrue(evento.aceptado)
         self.assertFalse(evento.ignorado)
         self.assertTrue(ventana.autosave.detenido)
         self.assertTrue(ventana.autosave.borrado)
+
+    def test_volver_a_imago_no_guarda_ni_borra_autoguardado(self):
+        ventana, evento, dialogo = self._cerrar(
+            ResultadoGuardado.EXITO, decision=DECISION_VOLVER)
+
+        self.assertTrue(evento.ignorado)
+        self.assertFalse(evento.aceptado)
+        self.assertEqual(ventana.guardados, 0)
+        self.assertFalse(ventana.autosave.borrado)
+        dialogo.assert_called_once()
+
+    def test_descartar_cierra_sin_guardar(self):
+        ventana, evento, _dialogo = self._cerrar(
+            ResultadoGuardado.EXITO, decision=DECISION_DESCARTAR)
+
+        self.assertTrue(evento.aceptado)
+        self.assertEqual(ventana.guardados, 0)
+        self.assertTrue(ventana.autosave.borrado)
+
+    def test_una_sola_decision_reune_y_guarda_todos_los_documentos(self):
+        canvases = [
+            _CanvasFalso(limpio=False),
+            _CanvasFalso(limpio=True, recuperado=True),
+        ]
+        ventana = _VentanaFalsa(
+            canvases, ResultadoGuardado.EXITO, limpiar_al_guardar=True)
+        evento = _EventoFalso()
+
+        with patch("main.preguntar_cierre_documentos",
+                   return_value=DECISION_GUARDAR) as dialogo:
+            MainWindow.closeEvent(ventana, evento)
+
+        self.assertTrue(evento.aceptado)
+        self.assertEqual(ventana.guardados, 2)
+        dialogo.assert_called_once()
+        documentos = dialogo.call_args.args[1]
+        self.assertEqual(len(documentos), 2)
+        self.assertEqual(
+            [documento["canvas"] for documento in documentos], canvases)
+
+
+class DialogoCambiosSinGuardarTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_muestra_una_miniatura_actual_por_documento(self):
+        primero = Canvas(24, 16)
+        segundo = Canvas(12, 20)
+        dialogo = UnsavedDocumentsDialog([
+            {"canvas": primero, "title": "Primero", "path": "primero.png"},
+            {"canvas": segundo, "title": "Segundo", "path": None},
+        ])
+
+        self.assertEqual(len(dialogo._filas), 2)
+        self.assertTrue(all(
+            fila.miniatura.pixmap() is not None
+            and not fila.miniatura.pixmap().isNull()
+            for fila in dialogo._filas))
+        self.assertIn("primero.png", dialogo._filas[0].ruta.text())
+        self.assertEqual(dialogo.decision(), DECISION_VOLVER)
+
+        dialogo.deleteLater()
+        primero.deleteLater()
+        segundo.deleteLater()
+
+    def test_las_tres_decisiones_son_explicitas(self):
+        for decision in (DECISION_GUARDAR, DECISION_DESCARTAR,
+                         DECISION_VOLVER):
+            with self.subTest(decision=decision):
+                dialogo = UnsavedDocumentsDialog([])
+                dialogo._elegir(decision)
+                self.assertEqual(dialogo.decision(), decision)
+                dialogo.deleteLater()
+
+    def test_reutiliza_la_preview_reducida_sin_renderizar_el_documento(self):
+        preview = QPixmap(30, 20)
+        preview.fill()
+
+        class CanvasQueNoDebeRenderizar:
+            def render_flat_image(self, _fondo):
+                raise AssertionError("No debe recomponer el documento")
+
+        dialogo = UnsavedDocumentsDialog([{
+            "canvas": CanvasQueNoDebeRenderizar(),
+            "title": "Grande",
+            "path": "grande.imago",
+            "preview": preview,
+        }])
+
+        miniatura = dialogo._filas[0].miniatura.pixmap()
+        self.assertIsNotNone(miniatura)
+        self.assertFalse(miniatura.isNull())
+        dialogo.deleteLater()
 
 
 class ResultadoGuardadoTests(unittest.TestCase):
