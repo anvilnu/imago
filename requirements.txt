@@ -27,8 +27,8 @@ opencv-python-headless==4.13.0.92
 # bloque EXIF se reincrusta byte a byte sin recomprimir. Imago arranca aunque
 # no esté instalado (el guardado seguiría, sólo que sin EXIF).
 pillow==12.2.0
-# Plugins de Pillow para los formatos modernos al ABRIR (.avif/.heic/.heif y
-# .jxl), usados por main._cargar_via_pillow con import PEREZOSO: si faltaran,
+# Plugins de Pillow para ABRIR y GUARDAR formatos modernos (.avif/.heic/.heif y
+# .jxl), usados por utilidades.py con import PEREZOSO: si faltaran,
 # Imago seguiría funcionando y avisaría qué paquete instalar. Van también en
 # el empaquetado (collect_all en Imago.spec: traen DLLs nativas de códecs).
 pillow-heif==1.4.0

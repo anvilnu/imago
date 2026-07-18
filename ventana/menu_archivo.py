@@ -1000,7 +1000,8 @@ class AccionesMenuArchivo:
         ext = os.path.splitext(file_path)[1].lower().lstrip(".")
         # Formatos con canal alfa: aplanamos sobre fondo TRANSPARENTE para no perder
         # la transparencia. Los que no lo soportan (JPG, BMP...) sobre blanco.
-        _alpha_fmt = {"png", "webp", "tif", "tiff", "ico", "icns", "gif", "tga", "xpm", "cur"}
+        _alpha_fmt = {"png", "webp", "tif", "tiff", "ico", "icns", "gif", "tga",
+                      "xpm", "cur", "avif", "heic", "heif", "jxl"}
         _bg = _Qt.transparent if ext in _alpha_fmt else _Qt.white
         final_image = canvas.render_flat_image(background=_bg)
         if settings is None:
@@ -1049,6 +1050,10 @@ class AccionesMenuArchivo:
                     with open(ruta_temporal, "wb") as fh:
                         fh.write(datos_png8)
                     escrito_temporal = True
+                elif ext in ("avif", "heic", "heif", "jxl"):
+                    from utilidades import guardar_imagen_pillow
+                    escrito_temporal = guardar_imagen_pillow(
+                        imagen, ruta_temporal, ext, calidad=q)
                 else:
                     writer = QImageWriter(ruta_temporal)
                     if q is not None and q >= 0:
@@ -1097,7 +1102,7 @@ class AccionesMenuArchivo:
         """Calidad/compresion por defecto de cada formato (para Ctrl+S y como
         valor inicial del dialogo). -1 = sin parametro."""
         ext = ext.lower()
-        if ext in ("jpg", "jpeg", "webp"):
+        if ext in ("jpg", "jpeg", "webp", "avif", "heic", "heif", "jxl"):
             return 92
         if ext == "png":
             return 70
@@ -1105,10 +1110,11 @@ class AccionesMenuArchivo:
 
     def _ask_quality(self, ext, image, default):
         """Devuelve (settings, ok). Muestra el dialogo de opciones solo en formatos
-        que lo admiten (JPEG/WebP/PNG); en el resto devuelve ({'quality': -1}, True)
+        que lo admiten (JPEG/WebP/PNG y formatos modernos); en el resto devuelve
+        ({'quality': -1}, True)
         sin molestar. settings es un dict: quality + extras del formato."""
         ext = ext.lower()
-        if ext not in ("jpg", "jpeg", "webp", "png"):
+        if ext not in ("jpg", "jpeg", "webp", "png", "avif", "heic", "heif", "jxl"):
             return {"quality": -1}, True
         from new_dialog import QualityDialog
         dlg = QualityDialog(ext, image, default, self)
@@ -1158,12 +1164,18 @@ class AccionesMenuArchivo:
 
     def _supported_save_filter(self):
         """Filtro de Guardar como: .imago primero + todos los formatos que Qt sabe
-        ESCRIBIR, agrupando equivalentes (jpg/jpeg, tif/tiff)."""
+        ESCRIBIR y los códecs modernos de Pillow, agrupando equivalentes."""
         from PySide6.QtGui import QImageWriter
         exts = {bytes(b).decode().lower() for b in QImageWriter.supportedImageFormats()}
+        from utilidades import formatos_pillow_escribibles
+        modernos = {"avif", "heic", "heif", "jxl"}
+        exts = (exts - modernos) | formatos_pillow_escribibles()
         parts = [f"{t('dlg.filter.imago')} (*.imago)"]
         groups = [("JPEG", ["jpg", "jpeg"]), ("PNG", ["png"]), ("BMP", ["bmp"]),
                   ("GIF", ["gif"]), ("WebP", ["webp"]), ("TIFF", ["tif", "tiff"]),
+                  (t("fmt.avif"), ["avif"]),
+                  (t("fmt.heic_heif"), ["heic", "heif"]),
+                  (t("fmt.jpeg_xl"), ["jxl"]),
                   (t("fmt.win_icon"), ["ico"]), ("Targa", ["tga"]), ("ICNS", ["icns"]),
                   ("WBMP", ["wbmp"]), ("PPM", ["ppm"]), ("PGM", ["pgm"]),
                   ("PBM", ["pbm"]), ("XBM", ["xbm"]), ("XPM", ["xpm"])]

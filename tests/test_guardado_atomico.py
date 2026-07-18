@@ -20,6 +20,7 @@ from models.anim_io import save_animation
 from models.autosave import AutoSaveManager
 from models.layer import Layer
 from models.project_io import load_project, save_ora, save_project
+from utilidades import (cargar_imagen_orientada, formatos_pillow_escribibles)
 from ventana.menu_archivo import AccionesMenuArchivo, ResultadoGuardado
 from widgets.canvas import Canvas
 
@@ -297,6 +298,40 @@ class IntegracionImagenExifTests(unittest.TestCase):
         self.assertFalse(canvas.recovered_dirty)
         self.assertEqual(os.listdir(self.tmp.name), ["imagen.png"])
 
+    def test_guardado_moderno_publica_y_reabre_con_alfa(self):
+        esperados = {"avif", "heic", "heif", "jxl"}
+        disponibles = formatos_pillow_escribibles()
+        if not esperados <= disponibles:
+            self.skipTest("Códecs Pillow modernos no instalados")
+
+        for ext in sorted(esperados):
+            with self.subTest(ext=ext):
+                ruta = os.path.join(self.tmp.name, "imagen." + ext)
+                canvas = _CanvasImagen()
+                canvas.imagen.fill(QColor(30, 80, 140, 120))
+                ventana = _VentanaArchivo(canvas)
+
+                resultado = AccionesMenuArchivo._save_image(
+                    ventana, canvas, ruta, settings={"quality": 92})
+
+                self.assertIs(resultado, ResultadoGuardado.EXITO)
+                cargada = cargar_imagen_orientada(ruta)
+                self.assertFalse(cargada.isNull())
+                self.assertEqual(cargada.size(), canvas.imagen.size())
+                self.assertEqual(cargada.pixelColor(0, 0).alpha(), 120)
+                self.assertTrue(canvas.undo_stack.isClean())
+
+    def test_filtro_guardar_incluye_formatos_modernos_disponibles(self):
+        disponibles = formatos_pillow_escribibles()
+        if not disponibles:
+            self.skipTest("Códecs Pillow modernos no instalados")
+        filtro = AccionesMenuArchivo._supported_save_filter(object())
+        for ext in disponibles:
+            with self.subTest(ext=ext):
+                self.assertIn("*." + ext, filtro)
+                self.assertEqual(
+                    AccionesMenuArchivo._default_quality(object(), ext), 92)
+
     def test_fallo_al_publicar_png_conserva_anterior_y_estado_pendiente(self):
         ruta = os.path.join(self.tmp.name, "imagen.png")
         with open(ruta, "wb") as f:
@@ -438,6 +473,21 @@ class ExportacionesAtomicasTests(unittest.TestCase):
         with open(ruta, "rb") as f:
             self.assertEqual(f.read(), b"LOTE ANTERIOR")
         self.assertEqual(os.listdir(self.tmp.name), ["lote.png"])
+
+    def test_lote_escribe_jpeg_xl_por_pillow(self):
+        if "jxl" not in formatos_pillow_escribibles():
+            self.skipTest("Códec JPEG XL de Pillow no instalado")
+        ruta = os.path.join(self.tmp.name, "lote.jxl")
+        parametros = {"quality": 92, "keep_exif": False, "keep_gps": False}
+
+        guardar_lote(_imagen(QColor(40, 90, 150, 110)), "origen.png",
+                     ruta, parametros)
+
+        cargada = cargar_imagen_orientada(ruta)
+        self.assertFalse(cargada.isNull())
+        self.assertEqual(cargada.size(), _imagen().size())
+        self.assertEqual(cargada.pixelColor(0, 0).alpha(), 110)
+        self.assertEqual(os.listdir(self.tmp.name), ["lote.jxl"])
 
 
 class ManifiestoRecuperacionTests(unittest.TestCase):

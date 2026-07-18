@@ -380,12 +380,14 @@ Photopea (julio 2026). Ir marcando `[x]` según se implementen.
   Además, Ver ▸ Previsualizar animación (`AnimPreviewDialog`) reproduce
   esos mismos fotogramas en un diálogo (play/pausa, deslizador, duración)
   sin tocar el lienzo; todo Qt, no necesita Pillow.
-- [x] **AVIF / HEIC / JXL** — HECHO (jul 2026), solo LECTURA: fallback
-  `_cargar_via_pillow` en `cargar_imagen_orientada` (main.py) vía los
-  paquetes OPCIONALES `pillow-heif` (avif/heic/heif) y `pillow-jxl-plugin`
-  (jxl), import perezoso (anotados como opcionales en requirements.txt).
-  Sin el plugin, un aviso dice qué paquete instalar; con él, las extensiones
-  aparecen en el filtro de Abrir. Pendiente opcional: escritura.
+- [x] **AVIF / HEIC / HEIF / JXL** — HECHO (jul 2026): lectura y escritura
+  mediante Pillow y sus códecs opcionales (`pillow-heif` y
+  `pillow-jxl-plugin`), con import perezoso. `cargar_imagen_orientada` mantiene
+  el fallback de lectura; Guardar como y Procesar por lotes detectan los
+  escritores disponibles, ofrecen calidad 1–100 y conservan el canal alfa.
+  La codificación se ejecuta fuera del hilo gráfico y se publica mediante el
+  guardado atómico común, por lo que un fallo no destruye el archivo anterior.
+  Sin el códec correspondiente, el formato no se ofrece para escritura.
 - [x] **Visor de metadatos** — HECHO (jul 2026): Imagen ▸ Propiedades de
   imagen (`properties_dialog.py`): general (dimensiones, PPP, tamaño de
   impresión, capas, archivo y tamaño en disco), EXIF decodificado con Pillow
