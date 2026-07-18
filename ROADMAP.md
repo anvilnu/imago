@@ -536,10 +536,6 @@ prioridades críticas, porque afectan a la integridad del documento.
   flood fill en cada movimiento); valorar un retardo o resolución reducida.
 - [ ] **Transferencia de estilo (IA)** — Fast neural style: modelos ONNX de
   ~7 MB. Probar calidad antes de cablear (regla de la casa para la IA).
-- [ ] **Iconos opcionales pendientes** — `selection_border.png`,
-  `fx_polar.png`, `fx_frosted.png`, `fx_crystallize.png`, `fx_duotone.png`
-  (las acciones salen sin icono; al añadirlos, `python generar_recursos.py`).
-
 ## Descartados (no retomar sin resolver lo indicado)
 
 - **Anonimizar caras/matrículas** — la detección fallaba con fotos borrosas;
