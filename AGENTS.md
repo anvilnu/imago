@@ -139,6 +139,9 @@ utilidades.py           crear_icono / crear_icono_checkable /
                         cargar_imagen_orientada (fallback Pillow para
                         AVIF/HEIC/JXL) / _canvas_thumb_pixmap: módulo propio
                         para que los mixins las importen sin ciclos con main.
+palette_io.py           Lectura de paletas GPL, ASE, ACO, ACT, JASC/RIFF PAL,
+                        listas HEX/TXT de Paint.NET y CSS; deduplica colores y
+                        no depende de plugins externos.
 theme.py                ÚNICA FUENTE DE VERDAD del estilo (tokens de color +
                         funciones que devuelven QSS por tipo de control).
 i18n.py                 Traducciones ES/EN/FR: diccionario de claves + t("clave",
@@ -286,12 +289,20 @@ widgets/
                         (_crear_atajos_herramientas en main.py).
   layers_panel.py       Panel de capas (incluye LayerPropertiesDialog).
   history_panel.py      Panel de historial (deshacer/rehacer).
-  colors_panel.py       Panel de color (primario/secundario, RGB, hex, muestras).
+  colors_panel.py       Panel de color (primario/secundario, RGB y hex).
+  color_dialog.py       Selector overlay con muestras propias persistentes,
+                        borrado masivo, colecciones con nombre e importación de
+                        paletas mediante palette_io.py. Importar REEMPLAZA las
+                        muestras: si no coinciden con un conjunto guardado debe
+                        ofrecer Guardar, Reemplazar sin guardar o Cancelar.
   histogram_panel.py    Histograma muestreado del documento activo; solo sondea
                         mientras su panel está visible.
   document_diagnostics.py  Ventana modeless de diagnóstico bajo demanda:
                         dimensiones, capas, memoria, proyecto y efectos caros;
                         SIN temporizador ni lectura de píxeles.
+  unsaved_documents.py Diálogo conjunto de cierre: miniatura, nombre y ruta de
+                        cada documento pendiente, con Guardar, Descartar o
+                        Volver a Imago. X/Escape siempre vuelven sin cerrar.
   ruler_overlay.py      RulerOverlay: reglas (px/cm) con línea de seguimiento.
   effect_controls.py    CenterPicker y AngleDial (controles de los efectos).
 
@@ -459,7 +470,9 @@ dentro de la ventana, no flotan. El montaje (en `create_docks()` de
 - Los botones `btn_toggle_*` hacen `container.setVisible(...)`. El de Historial
   apunta a `history_container` (estable); el panel interno `history_view` se
   **recrea** al cambiar de pestaña — ver el swap en `on_tab_changed`, que lo
-  reemplaza DENTRO de su contenedor con `layout().replaceWidget(...)`.
+  reemplaza DENTRO de su contenedor con `layout().replaceWidget(...)`. Los cinco
+  toggles superiores usan `Qt.NoFocus`: Espacio pertenece a la mano temporal
+  del lienzo y nunca debe activar un botón de panel que conserve el foco.
 - El `RulerOverlay` es hijo de `content_container`; un `eventFilter` re-sincroniza
   las reglas ante cualquier `Resize` de ese contenedor (arrastre de splitter,
   ocultar panel, resize de ventana).
@@ -469,9 +482,9 @@ dentro de la ventana, no flotan. El montaje (en `create_docks()` de
 
 ### Diagnóstico del documento = ventana independiente
 `DiagnosticoDocumentoDialog` es un `FramelessDialog` **modeless** separado de la
-columna derecha. Se abre con el botón de propiedades superior o desde Ver ▸
-Diagnóstico del documento; se conserva una sola instancia y sigue el documento
-activo. Su contenido no lleva sondeo: al abrir lee solo metadatos, `cacheKey()` y
+columna derecha. Se abre exclusivamente desde Ver ▸ Diagnóstico del documento;
+se conserva una sola instancia y sigue el documento activo. Su contenido no
+lleva sondeo: al abrir lee solo metadatos, `cacheKey()` y
 `sizeInBytes()`. Si cambia el historial visible, únicamente marca «Actualizar •»
 y espera al usuario. No debe volver al `right_splitter` ni renderizar capas,
 convertir imágenes o comprimir para calcular cifras: su ventana independiente
@@ -557,6 +570,22 @@ diera problemas, el usuario puede forzar el backend a mano con
   acumulan su cobertura con esa clase. Las teselas se crean solo al tocarlas y
   deben liberarse al terminar. Conserva siempre selección, bloqueo alfa,
   precisión premultiplicada durante el trazo, preview y un único paso de undo.
+- **Repintado regional durante trazos:** Pincel, Goma, Lápiz, Sustituir color y
+  Aerógrafo anuncian a `Canvas.actualizar_region_pintada()` solo la caja tocada
+  en el evento actual, no la acumulada de todo el trazo. El canvas invalida ese
+  ROI de `_cache_valid_region` y llama a `update(QRect)`; nunca lo sustituyas por
+  `repaint()` síncrono. `paintEvent` valida una sola vez por lote que la huella
+  solo cambió en los destinos anunciados. Si aparece cualquier otro cambio o un
+  efecto activo con influencia no local, conserva la invalidación completa de
+  respaldo. No calcules `_huella_visual()` desde cada `mouse_move`: añadiría un
+  recorrido proporcional al número de capas en la ruta interactiva. Si la capa
+  tiene máscara, `Layer.actualizar_cache_mascara_region()` parchea también el
+  compuesto `capa×máscara`; solo conserva su exterior si la otra entrada sigue
+  teniendo la misma `cacheKey()`. Nunca vuelvas a aplicar la máscara completa
+  por cada estampa de un trazo local. El Pincel sólido sobre `Grayscale8`
+  reutiliza una punta pre-rasterizada (`PenTool._mask_solid_stamp`): debe seguir
+  produciendo exactamente los mismos píxeles que el gradiente directo y no debe
+  reconstruirse por cada estampa de un segmento largo.
 - **Deshacer/rehacer:** `QUndoStack` en el canvas; los comandos de píxeles viven
   en `tools/commands.py` y los de capas/imagen completa en
   `models/layer_commands.py`. Las acciones de menú se habilitan/deshabilitan por

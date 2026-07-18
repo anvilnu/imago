@@ -2,7 +2,7 @@
 import uuid
 
 from PySide6.QtGui import QImage, QPainter
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QRect
 
 
 def render_doc_supersampled(doc):
@@ -264,6 +264,53 @@ class Layer:
         self._mask_cache_key = key
         return self._mask_cache
 
+    def actualizar_cache_mascara_region(self, rect, target="mask"):
+        """Actualiza solo un ROI de la caché ``capa×máscara``.
+
+        La caché exterior al rectángulo solo puede conservarse si su otra
+        entrada sigue siendo exactamente la misma: al editar la máscara debe
+        coincidir la imagen base y al editar la imagen debe coincidir la
+        máscara. Si no puede demostrarse, ``render_image()`` mantiene su
+        reconstrucción completa habitual.
+        """
+        if (self.mask is None or self._mask_cache is None
+                or self._mask_cache_key is None
+                or target not in ("image", "mask")):
+            return False
+        base = self.render_sin_mascara()
+        if (base.size() != self.mask.size()
+                or self._mask_cache.size() != base.size()):
+            return False
+        try:
+            clave_base_anterior, clave_mascara_anterior = self._mask_cache_key
+        except (TypeError, ValueError):
+            return False
+        clave_base_actual = base.cacheKey()
+        clave_mascara_actual = self.mask.cacheKey()
+        if target == "mask":
+            if clave_base_anterior != clave_base_actual:
+                return False
+        elif clave_mascara_anterior != clave_mascara_actual:
+            return False
+
+        zona = QRect(rect).normalized().intersected(
+            QRect(0, 0, base.width(), base.height()))
+        if zona.isEmpty():
+            self._mask_cache_key = (
+                clave_base_actual, clave_mascara_actual)
+            return True
+
+        parche = _apply_mask_to_image_region(base, self.mask, zona)
+        if parche.isNull():
+            return False
+        painter = QPainter(self._mask_cache)
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Source)
+        painter.drawImage(zona.topLeft(), parche)
+        painter.end()
+        self._mask_cache_key = (clave_base_actual, clave_mascara_actual)
+        return True
+
 
 def _apply_mask_to_image(image, mask):
     """Copia de `image` (ARGB) con su canal alfa multiplicado por la máscara en
@@ -286,6 +333,37 @@ def _apply_mask_to_image(image, mask):
     arr[:, :, 3] = ((alpha * marr + 127) // 255).astype(np.uint8)
     arr = np.ascontiguousarray(arr)
     return QImage(arr.data, W, H, 4 * W, QImage.Format_RGBA8888).copy()
+
+
+def _apply_mask_to_image_region(image, mask, rect):
+    """Compone ``imagen×máscara`` solo dentro de ``rect``.
+
+    A diferencia de :func:`_apply_mask_to_image`, nunca escala ni materializa
+    el documento completo. El llamador valida antes que ambas imágenes tengan
+    las mismas dimensiones.
+    """
+    import numpy as np
+    limites = QRect(0, 0, image.width(), image.height())
+    zona = QRect(rect).normalized().intersected(limites)
+    if zona.isEmpty() or mask.size() != image.size():
+        return QImage()
+
+    img = image.copy(zona).convertToFormat(QImage.Format_RGBA8888)
+    ancho, alto = zona.width(), zona.height()
+    bpl = img.bytesPerLine()
+    arr = np.frombuffer(img.constBits(), np.uint8).reshape(
+        alto, bpl)[:, :ancho * 4].reshape(alto, ancho, 4).copy()
+
+    mascara = mask.copy(zona).convertToFormat(QImage.Format_Grayscale8)
+    mbpl = mascara.bytesPerLine()
+    marr = np.frombuffer(mascara.constBits(), np.uint8).reshape(
+        alto, mbpl)[:, :ancho]
+    alpha = arr[:, :, 3].astype(np.uint16)
+    arr[:, :, 3] = ((alpha * marr + 127) // 255).astype(np.uint8)
+    arr = np.ascontiguousarray(arr)
+    return QImage(arr.data, ancho, alto, 4 * ancho,
+                  QImage.Format_RGBA8888).copy()
+
 
 class TextLayer(Layer):
     """Capa vectorial para texto. Renderiza el texto 'al vuelo' a la

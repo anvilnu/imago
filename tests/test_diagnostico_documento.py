@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -20,6 +21,7 @@ from widgets.document_diagnostics import (DiagnosticoDocumentoDialog,
 
 
 _APP = QApplication.instance() or QApplication([])
+_RAIZ = Path(__file__).resolve().parents[1]
 
 
 class _MainFalso:
@@ -40,6 +42,17 @@ class _VentanaFalsa(QMainWindow):
 
 
 class DiagnosticoDocumentoTests(unittest.TestCase):
+    def test_acceso_unico_desde_menu_ver(self):
+        construccion = (_RAIZ / "ventana" / "construccion_ui.py").read_text(
+            encoding="utf-8")
+        principal = (_RAIZ / "main.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("btn_document_diagnostics", construccion)
+        self.assertNotIn("btn_document_diagnostics", principal)
+        self.assertIn("self.document_diagnostics_action = QAction", construccion)
+        self.assertIn(
+            "view_menu.addAction(self.document_diagnostics_action)", construccion)
+
     def test_analisis_lee_metadatos_sin_renderizar_ni_copiar_pixeles(self):
         canvas = Canvas(100, 50)
         capa = Layer(100, 50, "Segunda")

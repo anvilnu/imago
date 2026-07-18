@@ -187,6 +187,8 @@ from ventana.construccion_ui import ConstruccionUI
 from ventana.cursores import CursoresHerramientas
 from widgets.tab_thumbnails import TabThumbnailBar
 from widgets.canvas_scroll import CanvasScrollArea
+from widgets.unsaved_documents import (DECISION_DESCARTAR, DECISION_GUARDAR,
+                                       preguntar_cierre_documentos)
 import theme
 
 # Utilidades compartidas (iconos temados, carga con orientación EXIF,
@@ -537,7 +539,7 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         has_canvas = canvas is not None
         for nombre in ('zoom_in_action', 'zoom_out_action', 'zoom_fit_action',
                        'zoom_actual_action', 'guides_action', 'fullscreen_action',
-                       'document_diagnostics_action', 'btn_document_diagnostics'):
+                       'document_diagnostics_action'):
             act = getattr(self, nombre, None)
             if act is not None:
                 act.setEnabled(has_canvas)
@@ -1550,7 +1552,6 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
             self.open_path(p)
 
     def closeEvent(self, event):
-        from PySide6.QtWidgets import QMessageBox
         from models.document_state import documento_pendiente
 
         # La primera pulsación durante una operación solicita cancelación y no
@@ -1567,31 +1568,52 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         if panel is not None:
             panel.reject()
 
-        # 1. Revisar TODAS las pestañas en busca de cambios sin guardar (incluye
-        # documentos recuperados que aún no se han guardado de verdad)
+        # 1. Reunir TODAS las pestañas con cambios (incluye documentos
+        # recuperados que aún no se han guardado de verdad) y presentar una
+        # única decisión, con miniaturas, en vez de encadenar avisos aislados.
+        pendientes = []
+        barra_miniaturas = getattr(self, "thumbnail_bar", None)
+        obtener_preview = getattr(
+            barra_miniaturas, "preview_for_canvas", None)
         for i in range(self.tabs.count()):
             marker = self.tabs.widget(i)
             if (marker and hasattr(marker, 'canvas')
                     and documento_pendiente(marker.canvas)):
-                self.tabs.setCurrentIndex(i)  # Mostramos la pestaña afectada al usuario
-                nombre = self.tabs.tabText(i)
-                resp = imago_warning(
-                    self, t("msg.unsaved.title"),
-                    t("msg.unsaved.text", nombre=nombre),
-                    QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
-                )
-                if resp == QMessageBox.Save:
+                canvas = marker.canvas
+                try:
+                    preview = (obtener_preview(canvas)
+                               if callable(obtener_preview) else None)
+                except RuntimeError:
+                    preview = None
+                pendientes.append({
+                    "index": i,
+                    "canvas": canvas,
+                    "title": self.tabs.tabText(i),
+                    "path": (getattr(canvas, "project_path", None)
+                             or getattr(canvas, "image_path", None)),
+                    "preview": preview,
+                })
+
+        if pendientes:
+            decision = preguntar_cierre_documentos(self, pendientes)
+            if decision == DECISION_GUARDAR:
+                for documento in pendientes:
+                    marker = self.tabs.widget(documento["index"])
+                    if marker is None or getattr(marker, "canvas", None) \
+                            is not documento["canvas"]:
+                        event.ignore()
+                        return
+                    self.tabs.setCurrentIndex(documento["index"])
                     resultado = self.save_file()
                     # Cancelar, fallar o seguir pendiente aborta el cierre; así
                     # autosave.clear() nunca borra la única copia recuperable.
                     if (resultado is not ResultadoGuardado.EXITO
-                            or documento_pendiente(marker.canvas)):
+                            or documento_pendiente(documento["canvas"])):
                         event.ignore()
                         return
-                elif resp == QMessageBox.Cancel:
-                    event.ignore()
-                    return
-                # Discard: seguimos con la siguiente pestaña
+            elif decision != DECISION_DESCARTAR:
+                event.ignore()
+                return
 
         if getattr(self, "_ai_handle", None) is not None:
             self._ai_cancel_current()

@@ -164,6 +164,13 @@ class PaintCommand(QUndoCommand):
             layer.mask = result
         else:
             layer.image = result
+        # Sustituir el QImage es obligatorio para la identidad que observa
+        # MoveTool, pero no obliga a perder la caché capa×máscara exterior al
+        # parche. Se conserva el update() completo de este comando para no
+        # cambiar la retirada de previews de otras herramientas.
+        if self.rect is not None and layer.has_mask():
+            layer.actualizar_cache_mascara_region(
+                self.rect, target=self.target)
         self.canvas.update()
 
     def undo(self):

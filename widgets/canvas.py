@@ -2,7 +2,7 @@ from i18n import t
 # widgets/canvas.py
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QImage, QColor, QBrush, QUndoStack, QRegion
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, Signal, QRect, QRectF
 from models.layer import (Layer, visible_efectiva, visible_para_fusion,
                           base_de_recorte, render_recortada)
 
@@ -64,6 +64,10 @@ class Canvas(QWidget):
         # pestañas la confirma tras regenerar su caché reducida; así una
         # selección, el zoom o las hormigas no fuerzan miniaturas nuevas.
         self._estado_miniatura_notificado = None
+        # Cambios locales anunciados desde las herramientas. Solo se guarda su
+        # identidad O(1): paintEvent valida la huella completa una vez por lote,
+        # igual que antes, para no recorrer las capas en cada muestra del ratón.
+        self._cambios_visuales_parciales_pendientes = set()
         # 🔔 Avisar a la herramienta activa cuando el historial cambie
         # (deshacer/rehacer): así la caja de Mover selección sigue los cambios
         self.undo_stack.indexChanged.connect(self._on_history_changed)
@@ -457,6 +461,117 @@ class Canvas(QWidget):
                 fx,
             ))
         return self.base_width, self.base_height, tuple(capas)
+
+    @staticmethod
+    def _huella_admite_cambios_locales(anterior, actual, cambios):
+        """Comprueba que solo cambió el contenido local anunciado.
+
+        Esta verificación es la red de seguridad del repintado regional: si
+        cambia a la vez cualquier propiedad, otra capa o las dimensiones, el
+        llamador conserva la invalidación completa tradicional.
+        """
+        if anterior is None or actual is None:
+            return False
+        try:
+            ancho_ant, alto_ant, capas_ant = anterior
+            ancho_act, alto_act, capas_act = actual
+        except (TypeError, ValueError):
+            return False
+        if ((ancho_ant, alto_ant) != (ancho_act, alto_act)
+                or len(capas_ant) != len(capas_act)):
+            return False
+
+        for indice, (capa_ant, capa_act) in enumerate(zip(capas_ant, capas_act)):
+            if len(capa_ant) != len(capa_act):
+                return False
+            for campo, (valor_ant, valor_act) in enumerate(zip(capa_ant, capa_act)):
+                if valor_ant == valor_act:
+                    continue
+                target = "mask" if campo == 1 else "image" if campo == 0 else None
+                if target is None or (indice, target) not in cambios:
+                    return False
+        return True
+
+    def actualizar_region_pintada(self, rect, layer_index=None, target="image"):
+        """Invalida y repinta solo un ROI modificado durante un trazo.
+
+        ``rect`` usa coordenadas de imagen y el convenio semiabierto habitual
+        (x0, y0, x1, y1), aunque también acepta ``QRect``. El camino rápido se
+        activa únicamente si la huella demuestra que solo cambió el destino
+        indicado y la capa no tiene efectos con influencia no local. Ante
+        cualquier duda se solicita el repintado completo de siempre.
+
+        Devuelve ``True`` cuando pudo conservar la caché exterior al ROI.
+        """
+        if isinstance(rect, QRect):
+            zona = QRect(rect)
+        else:
+            try:
+                x0, y0, x1, y1 = rect
+                zona = QRect(int(x0), int(y0), int(x1) - int(x0),
+                             int(y1) - int(y0))
+            except (TypeError, ValueError):
+                self.update()
+                return False
+        zona = zona.normalized().intersected(
+            QRect(0, 0, self.base_width, self.base_height))
+        if zona.isEmpty():
+            return True
+
+        if layer_index is None:
+            layer_index = self.active_layer_index
+        if target not in ("image", "mask"):
+            self.update()
+            return False
+        try:
+            layer_index = int(layer_index)
+            layer = self.layers[layer_index]
+        except (TypeError, ValueError, IndexError):
+            self.update()
+            return False
+
+        # Si la capa lleva máscara, su render base también tiene una caché.
+        # Parchearla antes del paintEvent evita reconstruir capa×máscara para
+        # todos los píxeles del documento por una estampa local.
+        if layer.has_mask():
+            layer.actualizar_cache_mascara_region(zona, target=target)
+
+        # Los efectos pueden extender un cambio fuera del pincel (sombra,
+        # resplandor, bisel...). Hasta que cada efecto declare su radio de
+        # influencia, se mantiene para ellos el camino completo y seguro.
+        if any(getattr(efecto, "activo", False)
+               for efecto in getattr(layer, "effects", ())):
+            self.update()
+            return False
+
+        # Sin una composición previa no existe nada que conservar. También
+        # evita crear una huella nueva aquí: la validación O(núm. capas) queda
+        # agrupada en paintEvent, como en el camino histórico.
+        if (getattr(self, "_last_cache_state", None) is None
+                or not hasattr(self, "_cache_valid_region")):
+            self.update()
+            return False
+
+        if hasattr(self, "_cache_valid_region"):
+            self._cache_valid_region = self._cache_valid_region.subtracted(
+                QRegion(zona))
+        self._cambios_visuales_parciales_pendientes.add(
+            (layer_index, target))
+
+        z = max(float(self.zoom_factor), 1e-9)
+        zona_widget = QRectF(
+            (self.margin_left + zona.x()) * z,
+            (self.margin_top + zona.y()) * z,
+            zona.width() * z,
+            zona.height() * z,
+        ).toAlignedRect()
+        # Margen de dispositivo para antialias y redondeos con zoom
+        # fraccionario. Es constante: nunca crece con el documento.
+        zona_widget.adjust(-2, -2, 2, 2)
+        zona_widget = zona_widget.intersected(self.rect())
+        if not zona_widget.isEmpty():
+            self.update(zona_widget)
+        return True
 
     def _notificar_cambio_visual(self):
         """Emite solo si el compuesto cambió desde la última notificación."""
@@ -1668,12 +1783,29 @@ class Canvas(QWidget):
                 
             state = self._huella_visual()
             if state != getattr(self, "_last_cache_state", None):
-                self._cache_valid_region = QRegion()
+                cambios_parciales = getattr(
+                    self, "_cambios_visuales_parciales_pendientes", set())
+                cambio_local_valido = bool(
+                    cambios_parciales
+                    and self._huella_admite_cambios_locales(
+                        self._last_cache_state, state, cambios_parciales))
+                if not cambio_local_valido:
+                    self._cache_valid_region = QRegion()
+                    # Si una petición regional coincidió con otro cambio no
+                    # anunciado, este paintEvent puede cubrir solo el ROI. Se
+                    # agenda una pasada completa para no dejar el resto de la
+                    # pantalla mostrando la composición anterior.
+                    if cambios_parciales:
+                        self.update()
                 self._last_cache_state = state
+                cambios_parciales.clear()
                 # Durante un trazo los píxeles cambian antes de entrar en el
                 # historial. Detectarlos aquí mantiene la miniatura en vivo sin
                 # sondear el documento cuando la aplicación está inactiva.
                 self._notificar_cambio_visual()
+            else:
+                getattr(self, "_cambios_visuales_parciales_pendientes",
+                        set()).clear()
 
             # --- RECOMPOSICIÓN PARCIAL ---
             dirty_region = QRegion(src_rect_int).subtracted(self._cache_valid_region)

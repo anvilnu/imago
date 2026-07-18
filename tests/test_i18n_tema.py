@@ -2,17 +2,24 @@
 
 import ast
 from collections import defaultdict
+import os
 from pathlib import Path
 import re
 import unittest
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QApplication
 
 import i18n
+import recursos_rc  # noqa: F401  (registra los iconos embebidos)
 import theme
+from ventana.menu_ver import AccionesMenuVer
 
 
 ROOT = Path(__file__).resolve().parents[1]
+_APP = QApplication.instance() or QApplication([])
 
 
 def _string_entries():
@@ -78,6 +85,26 @@ class ThemeSourceTests(unittest.TestCase):
                 self.assertIn(theme.BG_BUTTON, theme.document_tabs_qss())
                 self.assertIn("CANVAS_FRAME", theme._DARK)
                 self.assertIn("CANVAS_FRAME", theme._LIGHT)
+
+    def test_iconos_de_lectura_se_tintan_en_tema_claro(self):
+        theme.use_theme("light")
+        for nombre in ("status_size.png", "status_cursor.png", "status_zoom.png"):
+            with self.subTest(nombre=nombre):
+                _caja, icono, _valor = AccionesMenuVer._make_status_readout(
+                    None, nombre)
+                pixmap = icono.pixmap()
+                self.assertIsNotNone(pixmap)
+                self.assertFalse(pixmap.isNull())
+                imagen = pixmap.toImage()
+                colores = [
+                    imagen.pixelColor(x, y)
+                    for y in range(imagen.height())
+                    for x in range(imagen.width())
+                    if imagen.pixelColor(x, y).alpha() >= 32
+                ]
+                self.assertTrue(colores)
+                self.assertLessEqual(
+                    max(color.lightness() for color in colores), 60)
 
     def test_main_y_miniaturas_no_incrustan_colores_qss(self):
         color_in_qss = re.compile(
