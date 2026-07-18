@@ -406,12 +406,24 @@ prioridades críticas, porque afectan a la integridad del documento.
   rollback, error de carga y clasificación GPU, además de la suite completa de
   125 pruebas superadas en Windows 11 (3 POSIX omitidas automáticamente).
 
-- [ ] **Limpiar duplicados de i18n y centralizar el estilo restante.**
+- [x] **Limpiar duplicados de i18n y centralizar el estilo restante.**
   `opt.chk.antialias` está definida dos veces con textos distintos y varias
   claves de efectos están repetidas. Eliminar duplicados y añadir una
   comprobación automática. Mover a `theme.py` los colores/QSS visibles que aún
   están en `main.py`, `tab_thumbnails.py` y otros widgets, respetando tema
   claro y oscuro.
+  Completado el 18-07-2026. Eliminadas las cinco colisiones reales del literal
+  `_STRINGS`: `opt.chk.antialias` y las etiquetas de efectos `levels`, `angle`,
+  `color1` y `color2`, conservando en todos los casos el texto que ya prevalecía
+  en ejecución. Una regresión basada en AST examina el literal sin que Python
+  oculte las repeticiones y valida además que las 1.531 claves tengan ES/EN/FR.
+  La `QPalette`, el QSS de pestañas y cierres, las superficies principales y el
+  marco del lienzo salen ahora de `theme.py`; `main.py`, `tab_thumbnails.py` y
+  `canvas_scroll.py` ya no incrustan esos colores. Se añadieron tokens específicos
+  para claro/oscuro y se corrigió `use_theme()`: volver a oscuro dentro del mismo
+  proceso restaura realmente todos los tokens y limpia la caché de iconos.
+  Cubierto por 5 regresiones nuevas y la suite completa de 130 pruebas superadas
+  en Windows 11 (3 pruebas POSIX omitidas automáticamente).
 
 - [ ] **Aclarar o reforzar la eliminación de GPS EXIF.** Hoy se neutraliza el
   puntero GPS, por lo que lectores normales no muestran las coordenadas, pero

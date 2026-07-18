@@ -7,6 +7,7 @@ clics del fondo al canvas para deseleccionar). Cada pestaña crea la suya en
 create_new_tab_canvas."""
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtWidgets import QScrollArea, QWidget
+import theme
 
 class CanvasFrameOverlay(QWidget):
     """Overlay transparente, por encima del lienzo, que dibuja un marco sutil
@@ -14,8 +15,6 @@ class CanvasFrameOverlay(QWidget):
     de vista al sacar una selección, el marco sigue pegado al borde de la imagen.
     Al ser un widget aparte, se repinta entero (no pierde lados ni deja rastro) y
     no interfiere con el desplazamiento."""
-
-    FRAME = (110, 110, 110)   # gris sutil, más claro que el fondo (#404040)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -50,7 +49,7 @@ class CanvasFrameOverlay(QWidget):
         B = T + img_h - 1
         from PySide6.QtGui import QPainter, QPen, QColor
         p = QPainter(self)
-        pen = QPen(QColor(*self.FRAME))
+        pen = QPen(QColor(theme.CANVAS_FRAME))
         pen.setWidth(1)
         pen.setCosmetic(True)
         p.setPen(pen)

@@ -496,7 +496,6 @@ _STRINGS = {
     "opt.lbl.source":            {"es": "Fuente:", "en": "Source:", "fr": "Source :"},
 
     "opt.chk.contiguous":        {"es": "Contigua", "en": "Contiguous", "fr": "Contigu"},
-    "opt.chk.antialias":         {"es": "Suavizar bordes", "en": "Anti-alias", "fr": "Lissage"},
     "opt.chk.all_layers":        {"es": "Todas las capas", "en": "All layers", "fr": "Tous les calques"},
 
     "opt.tip.contig_bucket":     {"es": "Solo la mancha conectada al clic. Desactívala para rellenar todos los píxeles similares.", "en": "Only the connected area. Uncheck to fill all similar pixels.", "fr": "Uniquement la zone connectée au clic. Décochez pour remplir tous les pixels similaires."},
@@ -1409,7 +1408,6 @@ _STRINGS = {
     "fx.l.preserve_lum": {"es": "Conservar luminosidad", "en": "Preserve luminosity", "fr": "Préserver la luminosité"},
     "fx.l.position": {"es": "Posición:", "en": "Position:", "fr": "Position :"},
     "fx.l.band_width": {"es": "Anchura:", "en": "Band width:", "fr": "Largeur :"},
-    "fx.l.levels": {"es": "Niveles:", "en": "Levels:", "fr": "Niveaux :"},
     "fx.l.segments": {"es": "Segmentos:", "en": "Segments:", "fr": "Segments :"},
     "fx.wb.pick": {"es": "Cuentagotas", "en": "Eyedropper", "fr": "Pipette"},
     "fx.wb.auto": {"es": "Automático", "en": "Auto", "fr": "Automatique"},
@@ -1447,9 +1445,6 @@ _STRINGS = {
     "fx.layer.color_overlay": {"es": "Superposición de color", "en": "Color overlay", "fr": "Incrustation couleur"},
     "fx.layer.inner_shadow": {"es": "Sombra interior", "en": "Inner shadow", "fr": "Ombre interne"},
     "fx.layer.gradient": {"es": "Superposición de degradado", "en": "Gradient overlay", "fr": "Incrustation dégradé"},
-    "fx.l.angle": {"es": "Ángulo:", "en": "Angle:", "fr": "Angle :"},
-    "fx.l.color1": {"es": "Color 1:", "en": "Color 1:", "fr": "Couleur 1 :"},
-    "fx.l.color2": {"es": "Color 2:", "en": "Color 2:", "fr": "Couleur 2 :"},
     "fx.layer.bevel": {"es": "Bisel / relieve", "en": "Bevel & emboss", "fr": "Biseautage / estampage"},
     "fx.layer.satin": {"es": "Satinado", "en": "Satin", "fr": "Satin"},
     "fx.l.light": {"es": "Luz:", "en": "Highlight:", "fr": "Lumière :"},

@@ -235,7 +235,7 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         # =========================================================================
         title_widget = QWidget()
         # 1: Dibujamos la línea fina aquí para que quede justo debajo de las pestañas
-        title_widget.setStyleSheet(f"background: transparent; border-bottom: 1px solid {theme.BORDER_SOFT};")
+        title_widget.setStyleSheet(theme.title_tabs_container_qss())
         title_layout = QHBoxLayout(title_widget)
         title_layout.setContentsMargins(2, 0, 0, 1)
         title_layout.setSpacing(0)
@@ -252,48 +252,7 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         
         self.tabs.setTabsClosable(True)
         self.tabs.setTabPosition(QTabWidget.TabPosition.North)
-        self.tabs.setStyleSheet("""
-            QTabWidget {
-                border: none;
-                background: transparent;
-            }
-            QTabWidget::pane {
-                border: none;
-                background: transparent;
-            }
-            QTabBar {
-                /* EL TRUCO: Desactiva por completo la línea base interna de Qt */
-                qproperty-drawBase: 0; 
-                background: transparent;
-                border: none;
-            }
-            QTabBar::tab {
-                background: #3a3a3a;
-                color: #b0b0b0;
-                height: 30px;
-                padding-left: 10px;
-                padding-right: 28px;
-                margin-right: 2px;
-                margin-top: 2px;
-                font-family: 'Segoe UI', Arial;
-                font-size: 11px;
-                border: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                max-width: 80px;  /* AÑADIDO: Límite superior de tamaño 140 a las pestañas */
-                min-width: 80px;   /* AÑADIDO: Límite inferior de tamaño 80 a las pestañas */
-            }
-            QTabBar::tab:selected {
-                background: #1a4f7c; /* Pestaña activa en azul */
-                color: white;
-                font-weight: bold;
-                border-top: 2px solid #007acc; /* Filo superior brillante */
-            }
-            QTabBar::tab:hover:!selected { 
-                background: #4a4a4a; 
-                color: white; 
-            }
-        """)
+        self.tabs.setStyleSheet(theme.document_tabs_qss())
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.on_tab_changed)
         # ── La barra de pestañas clásica se sustituye por la tira de miniaturas (más
@@ -308,7 +267,7 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         central = QWidget()
         central.setObjectName("RootCentral")
         # Borde fino (1px) de la ventana sin marco, para que el contorno se vea bien
-        central.setStyleSheet(f"#RootCentral {{ background-color: {theme.BG_WINDOW}; border: 1px solid {theme.BORDER}; }}")
+        central.setStyleSheet(theme.root_central_qss())
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(1, 1, 1, 1)
@@ -329,7 +288,7 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         #    en el centro la tira de miniaturas de documentos (abarca ese alto);
         #    a la derecha los botones de panel.
         top_block = QWidget()
-        top_block.setStyleSheet(f"background-color: {theme.BG_DARK};")
+        top_block.setStyleSheet(theme.top_block_qss())
         top_block_layout = QHBoxLayout(top_block)
         top_block_layout.setContentsMargins(0, 0, 0, 0)
         top_block_layout.setSpacing(8)
@@ -679,7 +638,7 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         canvas.crop_applied_callback = self.fit_canvas_to_screen
 
         scroll_area = CanvasScrollArea()
-        scroll_area.setStyleSheet(f"background-color: {theme.BG_TILE}; border: none;")
+        scroll_area.setStyleSheet(theme.canvas_scroll_qss())
         scroll_area.setAlignment(Qt.AlignCenter)
         scroll_area.setWidget(canvas)
         scroll_area.canvas = canvas
@@ -692,23 +651,7 @@ class MainWindow(AccionesMenuIA, AccionesMenuAjustes, OpcionesHerramientas,
         
         # ✕ BOTÓN DE CIERRE PERSONALIZADO E INMUNE A LOS BUGS DE QT CSS
         close_btn = QPushButton("✕")
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {theme.TEXT_DIM};
-                border: none;
-                font-family: 'Segoe UI', Arial;
-                font-size: 10px;
-                font-weight: bold;
-                width: 16px;
-                height: 16px;
-            }}
-            QPushButton:hover {{
-                color: {theme.DANGER}; /* La X se vuelve roja fina al pasar el ratón */
-                background-color: rgba(255, 255, 255, 0.15); /* Destello sutil moderno */
-                border-radius: 3px;
-            }}
-        """)
+        close_btn.setStyleSheet(theme.tab_close_button_qss())
         # Conectamos de forma segura buscando dinámicamente el índice real de la pestaña
         close_btn.clicked.connect(lambda checked=False, m=dummy_tab_marker: self.close_tab(self.tabs.indexOf(m)))
         # Colocamos el botón en el lado derecho de la pestaña nativamente
@@ -1687,14 +1630,20 @@ class _NoMnemonicUnderlineStyle(QProxyStyle):
 
 
 def apply_dark_theme(app):
-    """Estilo Fusion + paleta oscura con los colores EXACTOS del proyecto.
-    Fusion dibuja todos los widgets el propio Qt (igual en Windows y en Linux)
-    e ignora el tema claro/oscuro del sistema. La paleta usa los hex actuales,
-    asi que los widgets no estilados a mano (QMessageBox, spinbox, combos,
-    scrollbars, tooltips...) quedan oscuros y consistentes en ambos sistemas.
-    Lo ya estilado con stylesheets NO cambia: el stylesheet manda sobre la paleta.
-    """
-    from PySide6.QtGui import QPalette, QColor, QFont
+    """Aplica Fusion y la paleta oscura centralizada en theme.py."""
+    theme.use_theme("dark")
+    _apply_fusion_palette(app)
+
+
+def apply_light_theme(app):
+    """Aplica Fusion y la paleta clara centralizada en theme.py."""
+    theme.use_theme("light")
+    _apply_fusion_palette(app)
+
+
+def _apply_fusion_palette(app):
+    """Configura la parte no cromatica del estilo y consume la paleta del tema."""
+    from PySide6.QtGui import QFont
     # 'Segoe UI' (y 'Arial') son fuentes de Windows; en Linux no existen.
     # Registramos sustitutos equivalentes para que Qt use una fuente parecida.
     # Afecta tanto a QFont(...) como a los font-family de los stylesheets; en
@@ -1703,87 +1652,7 @@ def apply_dark_theme(app):
     QFont.insertSubstitutions("Arial", ["Liberation Sans", "DejaVu Sans", "Noto Sans"])
     # Fusion envuelto en el proxy que oculta el subrayado de los mnemónicos.
     app.setStyle(_NoMnemonicUnderlineStyle(QStyleFactory.create("Fusion")))
-
-    WIN  = QColor("#2b2b2b")   # fondo general de paneles/ventanas
-    BASE = QColor("#202020")   # fondo de campos de entrada
-    TEXT = QColor("#e0e0e0")   # texto
-    BTN  = QColor("#3a3a3a")   # fondo de botones
-    DIS  = QColor("#555555")   # texto deshabilitado
-    HL   = QColor("#1a4f7c")   # seleccion (mismo azul que el menu)
-
-    pal = QPalette()
-    pal.setColor(QPalette.Window, WIN)
-    pal.setColor(QPalette.WindowText, TEXT)
-    pal.setColor(QPalette.Base, BASE)
-    pal.setColor(QPalette.AlternateBase, WIN)
-    pal.setColor(QPalette.Text, TEXT)
-    pal.setColor(QPalette.ToolTipBase, WIN)
-    pal.setColor(QPalette.ToolTipText, TEXT)
-    pal.setColor(QPalette.Button, BTN)
-    pal.setColor(QPalette.ButtonText, TEXT)
-    pal.setColor(QPalette.BrightText, QColor("#ffffff"))
-    pal.setColor(QPalette.Link, QColor("#007acc"))
-    pal.setColor(QPalette.Highlight, HL)
-    pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    pal.setColor(QPalette.PlaceholderText, QColor("#888888"))
-    # Bordes/relieves de Fusion en tonos oscuros (si no, dibuja biseles claros)
-    pal.setColor(QPalette.Light,    QColor("#3a3a3a"))
-    pal.setColor(QPalette.Midlight, QColor("#333333"))
-    pal.setColor(QPalette.Mid,      QColor("#444444"))
-    pal.setColor(QPalette.Dark,     QColor("#1e1e1e"))
-    pal.setColor(QPalette.Shadow,   QColor("#000000"))
-    # Estados deshabilitados
-    for _role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
-        pal.setColor(QPalette.Disabled, _role, DIS)
-    pal.setColor(QPalette.Disabled, QPalette.Highlight, QColor("#3a3a3a"))
-    pal.setColor(QPalette.Disabled, QPalette.HighlightedText, DIS)
-    app.setPalette(pal)
-
-
-def apply_light_theme(app):
-    """Igual que apply_dark_theme pero con la paleta CLARA (primer borrador).
-    Fusion + QPalette clara para los widgets no estilados a mano; el resto lo
-    resuelve theme.use_theme("light") (tokens de QSS) + el tintado de iconos.
-    Se afinará; el tema oscuro sigue siendo el de por defecto."""
-    from PySide6.QtGui import QPalette, QColor, QFont
-    QFont.insertSubstitutions("Segoe UI", ["Noto Sans", "Cantarell", "DejaVu Sans", "Liberation Sans"])
-    QFont.insertSubstitutions("Arial", ["Liberation Sans", "DejaVu Sans", "Noto Sans"])
-    app.setStyle(_NoMnemonicUnderlineStyle(QStyleFactory.create("Fusion")))
-
-    WIN  = QColor("#f0f0f0")   # fondo general de paneles/ventanas
-    BASE = QColor("#ffffff")   # fondo de campos de entrada
-    TEXT = QColor("#202020")   # texto
-    BTN  = QColor("#e6e6e6")   # fondo de botones
-    DIS  = QColor("#aaaaaa")   # texto deshabilitado
-    HL   = QColor("#007acc")   # seleccion (mismo azul de acento)
-
-    pal = QPalette()
-    pal.setColor(QPalette.Window, WIN)
-    pal.setColor(QPalette.WindowText, TEXT)
-    pal.setColor(QPalette.Base, BASE)
-    pal.setColor(QPalette.AlternateBase, WIN)
-    pal.setColor(QPalette.Text, TEXT)
-    pal.setColor(QPalette.ToolTipBase, WIN)
-    pal.setColor(QPalette.ToolTipText, TEXT)
-    pal.setColor(QPalette.Button, BTN)
-    pal.setColor(QPalette.ButtonText, TEXT)
-    pal.setColor(QPalette.BrightText, QColor("#000000"))
-    pal.setColor(QPalette.Link, QColor("#007acc"))
-    pal.setColor(QPalette.Highlight, HL)
-    pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    pal.setColor(QPalette.PlaceholderText, QColor("#999999"))
-    # Bordes/relieves de Fusion en tonos claros
-    pal.setColor(QPalette.Light,    QColor("#ffffff"))
-    pal.setColor(QPalette.Midlight, QColor("#f6f6f6"))
-    pal.setColor(QPalette.Mid,      QColor("#c0c0c0"))
-    pal.setColor(QPalette.Dark,     QColor("#a0a0a0"))
-    pal.setColor(QPalette.Shadow,   QColor("#808080"))
-    # Estados deshabilitados
-    for _role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
-        pal.setColor(QPalette.Disabled, _role, DIS)
-    pal.setColor(QPalette.Disabled, QPalette.Highlight, QColor("#d6d6d6"))
-    pal.setColor(QPalette.Disabled, QPalette.HighlightedText, DIS)
-    app.setPalette(pal)
+    app.setPalette(theme.application_palette())
 
 
 if __name__ == "__main__":

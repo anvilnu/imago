@@ -69,6 +69,23 @@ CHANNEL_R   = "#ff8888"   # etiqueta del canal Rojo
 CHANNEL_G   = "#88ff88"   # etiqueta del canal Verde
 CHANNEL_B   = "#8888ff"   # etiqueta del canal Azul
 
+# Roles de QPalette y detalles de chrome que no coinciden exactamente con los
+# tokens de los QSS. Tambien forman parte del tema y no deben vivir en main.py.
+PALETTE_BRIGHT_TEXT      = "#ffffff"
+PALETTE_HIGHLIGHT        = "#1a4f7c"
+PALETTE_HIGHLIGHTED_TEXT = "#ffffff"
+PALETTE_PLACEHOLDER      = "#888888"
+PALETTE_LIGHT            = "#3a3a3a"
+PALETTE_MIDLIGHT         = "#333333"
+PALETTE_MID              = "#444444"
+PALETTE_DARK             = "#1e1e1e"
+PALETTE_SHADOW           = "#000000"
+PALETTE_DISABLED_HIGHLIGHT = "#3a3a3a"
+CLOSE_HOVER_BG           = "rgba(255, 255, 255, 0.15)"
+DANGER_TEXT              = "#ffffff"
+CANVAS_FRAME             = "#6e6e6e"
+TAB_TEXT                 = "#b0b0b0"
+
 
 # =====================================================================
 #  CONMUTADOR DE TEMA  (base del tema claro)
@@ -88,6 +105,22 @@ ICON_TINT = None       # None = sin tinte; hex ("#333333") = recolorear iconos
 
 # Iconos que NO se tintan aunque el tema sea claro (arte de marca a color).
 LOGOS_SIN_TINTE = ("imago.png",)
+
+_THEME_TOKENS = (
+    "BG_WINDOW", "BG_DARK", "BG_BASE", "BG_BUTTON", "BG_HOVER",
+    "BG_PRESSED", "BG_TILE", "TEXT", "TEXT_DIM", "TEXT_MUTED",
+    "TEXT_DISABLED", "TEXT_HINT", "BORDER", "BORDER_SOFT",
+    "BORDER_BUTTON", "BORDER_FAINT", "BORDER_DIM", "ACCENT_DARK",
+    "BORDER_CHECK", "BG_HOVER_RAISED", "BG_DISABLED", "BORDER_INPUT",
+    "TEXT_FAINT", "TEXT_BRIGHT", "INFO_BLUE", "WARNING", "SEL_TEXT",
+    "TITLE_GREY", "CHANNEL_R", "CHANNEL_G", "CHANNEL_B",
+    "PALETTE_BRIGHT_TEXT", "PALETTE_HIGHLIGHT",
+    "PALETTE_HIGHLIGHTED_TEXT", "PALETTE_PLACEHOLDER", "PALETTE_LIGHT",
+    "PALETTE_MIDLIGHT", "PALETTE_MID", "PALETTE_DARK", "PALETTE_SHADOW",
+    "PALETTE_DISABLED_HIGHLIGHT", "CLOSE_HOVER_BG", "DANGER_TEXT",
+    "CANVAS_FRAME", "TAB_TEXT",
+)
+_DARK = {name: globals()[name] for name in _THEME_TOKENS}
 
 # Solo los tokens que CAMBIAN respecto al oscuro (ACCENT, ACCENT_BRIGHT, DANGER,
 # CAPTION_CLOSE y FONT se conservan: funcionan igual sobre claro).
@@ -123,6 +156,20 @@ _LIGHT = {
     "CHANNEL_R":       "#cc3333",
     "CHANNEL_G":       "#2e9e2e",
     "CHANNEL_B":       "#3355cc",
+    "PALETTE_BRIGHT_TEXT":      "#000000",
+    "PALETTE_HIGHLIGHT":        "#007acc",
+    "PALETTE_HIGHLIGHTED_TEXT": "#ffffff",
+    "PALETTE_PLACEHOLDER":      "#999999",
+    "PALETTE_LIGHT":            "#ffffff",
+    "PALETTE_MIDLIGHT":         "#f6f6f6",
+    "PALETTE_MID":              "#c0c0c0",
+    "PALETTE_DARK":             "#a0a0a0",
+    "PALETTE_SHADOW":           "#808080",
+    "PALETTE_DISABLED_HIGHLIGHT": "#d6d6d6",
+    "CLOSE_HOVER_BG":           "rgba(0, 0, 0, 0.10)",
+    "DANGER_TEXT":              "#ffffff",
+    "CANVAS_FRAME":             "#8a8a8a",
+    "TAB_TEXT":                 "#555555",
 }
 
 
@@ -132,6 +179,7 @@ def use_theme(mode):
     QSS y el factory de iconos leen estos globals al construir cada widget. El
     tema oscuro es el de por defecto y no altera nada."""
     global MODE, ICON_TINT
+    globals().update(_DARK)
     if mode == "light":
         globals().update(_LIGHT)
         ICON_TINT = "#333333"
@@ -139,6 +187,42 @@ def use_theme(mode):
     else:
         MODE = "dark"
         ICON_TINT = None
+    cache = globals().get("_icon_url_cache")
+    if cache is not None:
+        cache.clear()
+
+
+def application_palette():
+    """QPalette completa para los controles que no llevan QSS propio."""
+    from PySide6.QtGui import QColor, QPalette
+
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(BG_WINDOW))
+    palette.setColor(QPalette.WindowText, QColor(TEXT))
+    palette.setColor(QPalette.Base, QColor(BG_BASE))
+    palette.setColor(QPalette.AlternateBase, QColor(BG_WINDOW))
+    palette.setColor(QPalette.Text, QColor(TEXT))
+    palette.setColor(QPalette.ToolTipBase, QColor(BG_WINDOW))
+    palette.setColor(QPalette.ToolTipText, QColor(TEXT))
+    palette.setColor(QPalette.Button, QColor(BG_BUTTON))
+    palette.setColor(QPalette.ButtonText, QColor(TEXT))
+    palette.setColor(QPalette.BrightText, QColor(PALETTE_BRIGHT_TEXT))
+    palette.setColor(QPalette.Link, QColor(ACCENT))
+    palette.setColor(QPalette.Highlight, QColor(PALETTE_HIGHLIGHT))
+    palette.setColor(QPalette.HighlightedText, QColor(PALETTE_HIGHLIGHTED_TEXT))
+    palette.setColor(QPalette.PlaceholderText, QColor(PALETTE_PLACEHOLDER))
+    palette.setColor(QPalette.Light, QColor(PALETTE_LIGHT))
+    palette.setColor(QPalette.Midlight, QColor(PALETTE_MIDLIGHT))
+    palette.setColor(QPalette.Mid, QColor(PALETTE_MID))
+    palette.setColor(QPalette.Dark, QColor(PALETTE_DARK))
+    palette.setColor(QPalette.Shadow, QColor(PALETTE_SHADOW))
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+        palette.setColor(QPalette.Disabled, role, QColor(TEXT_DISABLED))
+    palette.setColor(QPalette.Disabled, QPalette.Highlight,
+                     QColor(PALETTE_DISABLED_HIGHLIGHT))
+    palette.setColor(QPalette.Disabled, QPalette.HighlightedText,
+                     QColor(TEXT_DISABLED))
+    return palette
 
 
 def es_logo(ruta):
@@ -232,6 +316,110 @@ def frame_qss(object_name, bg=None, border=None, width=1):
         border = BORDER
     return ("#%s { background-color: %s; border: %dpx solid %s; }"
             % (object_name, bg, int(width), border))
+
+
+def title_tabs_container_qss():
+    """Superficie transparente que separa la antigua barra de pestanas."""
+    return f"background: transparent; border-bottom: 1px solid {BORDER_SOFT};"
+
+
+def document_tabs_qss():
+    """Pestanas de documentos, conservadas como almacenamiento interno."""
+    return f"""
+        QTabWidget {{
+            border: none;
+            background: transparent;
+        }}
+        QTabWidget::pane {{
+            border: none;
+            background: transparent;
+        }}
+        QTabBar {{
+            qproperty-drawBase: 0;
+            background: transparent;
+            border: none;
+        }}
+        QTabBar::tab {{
+            background: {BG_BUTTON};
+            color: {TAB_TEXT};
+            height: 30px;
+            padding-left: 10px;
+            padding-right: 28px;
+            margin-right: 2px;
+            margin-top: 2px;
+            font-family: {FONT};
+            font-size: 11px;
+            border: none;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+            max-width: 80px;
+            min-width: 80px;
+        }}
+        QTabBar::tab:selected {{
+            background: {ACCENT_DARK};
+            color: {SEL_TEXT};
+            font-weight: bold;
+            border-top: 2px solid {ACCENT};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background: {BG_HOVER_RAISED};
+            color: {TEXT};
+        }}
+    """
+
+
+def root_central_qss():
+    """Marco exterior de la ventana principal sin decoracion nativa."""
+    return f"#RootCentral {{ background-color: {BG_WINDOW}; border: 1px solid {BORDER}; }}"
+
+
+def top_block_qss():
+    return f"background-color: {BG_DARK};"
+
+
+def canvas_scroll_qss():
+    return f"background-color: {BG_TILE}; border: none;"
+
+
+def tab_close_button_qss():
+    """X compacta de la QTabBar interna."""
+    return f"""
+        QPushButton {{
+            background: transparent;
+            color: {TEXT_DIM};
+            border: none;
+            font-family: {FONT};
+            font-size: 10px;
+            font-weight: bold;
+            width: 16px;
+            height: 16px;
+        }}
+        QPushButton:hover {{
+            color: {DANGER};
+            background-color: {CLOSE_HOVER_BG};
+            border-radius: 3px;
+        }}
+    """
+
+
+def thumbnail_close_button_qss():
+    """X roja superpuesta a cada miniatura de documento."""
+    return f"""
+        QPushButton {{
+            background-color: {DANGER};
+            color: {DANGER_TEXT};
+            border: none;
+            border-radius: 0px;
+            font-family: {FONT};
+            font-size: 10px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{
+            color: {DANGER_TEXT};
+            background-color: {DANGER};
+            border-radius: 0px;
+        }}
+    """
 
 
 # =====================================================================

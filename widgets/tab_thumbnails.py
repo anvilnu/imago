@@ -31,13 +31,8 @@ class _ThumbButton(QWidget):
         self.close_btn = QPushButton("\u2715", self)
         self.close_btn.setFixedSize(16, 16)
         self.close_btn.setCursor(Qt.PointingHandCursor)
-        # Mismo estilo de X que el resto de la app (como el cierre de los paneles):
-        # transparente, gris fina, y roja con un leve destello al pasar el ratón.
-        self.close_btn.setStyleSheet(
-            "QPushButton { background-color:rgba(255,68,68,1.0); border-radius:0px;"
-            " font-family:'Segoe UI','Arial'; font-size:10px; font-weight:bold; }"
-            " QPushButton:hover { color:#ffffff;"
-            " background-color:rgba(255,68,68,1.0); border-radius:0px; }")
+        # X compacta de peligro; sus colores salen de la fuente unica del tema.
+        self.close_btn.setStyleSheet(theme.thumbnail_close_button_qss())
         self.close_btn.move(self.W - 19, 2)
         self.close_btn.hide()
         self.close_btn.clicked.connect(self._on_close)
