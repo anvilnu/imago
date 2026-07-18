@@ -10,8 +10,19 @@ __pycache__/
 /.pytest_cache/
 /.mypy_cache/
 /.ruff_cache/
+/.tox/
+/.nox/
+/.hypothesis/
+/.pytype/
+/.pyre/
+/.cache/
 /.coverage
+/.coverage.*
+/coverage.xml
 /htmlcov/
+*.egg-info/
+/pip-wheel-metadata/
+/wheelhouse/
 
 # Compilación y distribución
 /build/
@@ -27,6 +38,10 @@ __pycache__/
 *.tmp
 *.temp
 *.bak
+*.orig
+*.rej
+*.swp
+*~
 
 # Configuración personal del editor y del sistema
 /.vscode/

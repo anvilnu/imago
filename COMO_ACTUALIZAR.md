@@ -64,8 +64,9 @@ powershell -ExecutionPolicy Bypass -File .\empaquetar.ps1
 ```
 
 > ⏳ **Tarda varios minutos** (el paso de PyInstaller es el lento; es normal).
-> Verás cómo avanza por 4 fases:
-> `1/4 Icono` → `2/4 PyInstaller` → `3/4 Inno Setup` → `4/4 ZIP portable`.
+> Verás cómo avanza por 5 fases:
+> `1/5 Icono` → `2/5 PyInstaller` → `3/5 Inno Setup` →
+> `4/5 ZIP portable` → `5/5 Higiene, tamaños y hashes`.
 > Cuando termine, verás en verde **"Listo: ..."**.
 
 ### Paso 5 — Recoge los resultados
@@ -76,7 +77,52 @@ Ya están regenerados y listos para repartir:
 | 🧩 **Instalador** | `installer\ImagoSetup.exe` |
 | 🎒 **Portable** | `Imago-1.0-portable.zip` |
 
+La última fase muestra el tamaño exacto y el SHA-256 de ambos archivos. También
+comprueba que el ZIP tenga su marcador `portable.txt`, que la distribución
+instalada no lo tenga y que ningún paquete incluya `datos`, logs, cachés o
+bytecode local. También exige que el contenido y los tamaños del ZIP coincidan
+archivo por archivo con `dist\Imago`. Si falla una comprobación, **no publiques
+esos archivos**.
+
 **¡Y ya está!** Eso es todo el proceso de actualización.
+
+---
+
+## 🧹 Qué se genera y qué se versiona
+
+El repositorio conserva el código y las recetas de construcción, no sus salidas.
+Estos artefactos son locales, están cubiertos por `.gitignore` y se pueden volver
+a generar:
+
+| Artefacto | Uso | Cómo se regenera |
+|---|---|---|
+| `.venv\` | Entorno y dependencias locales | `pip install -r requirements.txt` |
+| `build\` | Trabajo temporal de PyInstaller | `empaquetar.ps1` |
+| `dist\Imago\` | Aplicación desplegada sin comprimir | `empaquetar.ps1` |
+| `installer\ImagoSetup.exe` | Instalador de Windows | Inno Setup desde `empaquetar.ps1` |
+| `Imago-*-portable.zip` | Paquete portable publicable | `empaquetar.ps1` |
+| `icons\imago.ico` | Icono temporal para empaquetar | `empaquetar.ps1` |
+| `__pycache__`, `*.pyc`, logs y cachés de herramientas | Datos efímeros | Los recrean Python y las herramientas |
+| `datos\` y `portable.txt` en la raíz | Ajustes/datos locales del modo portable | Los crea Imago al ejecutarse |
+
+Sí se versionan `Imago.spec`, `Imago.iss`, `empaquetar.ps1` y
+`verificar_distribucion.py`, porque son las recetas reproducibles.
+
+Antes de publicar una distribución ya construida también puedes repetir solo la
+auditoría, sin modificar ningún archivo:
+
+```powershell
+.\.venv\Scripts\python.exe verificar_distribucion.py
+```
+
+Si conservas ZIP de varias versiones en la carpeta del proyecto, indica el que
+quieres revisar con `--portable ruta\al\archivo.zip`; la autodetección se niega a
+elegir uno al azar para evitar publicar una versión antigua.
+
+Como referencia de la auditoría del 18-07-2026, la versión 1.0 ocupa
+**494,85 MiB** desplegada, **191,74 MiB** en ZIP y **134,39 MiB** como instalador.
+Los tamaños cambiarán con las dependencias; revisa siempre las cifras que imprime
+el verificador actual.
 
 ---
 
@@ -114,8 +160,9 @@ Si no cambias nada, no pasa nada: simplemente se regenera la 1.0 encima.
   abierto**. Ciérralo (incluida cualquier ventana que hayas abierto desde
   `dist\Imago`) y vuelve a ejecutar el script.
 - **"Inno Setup no encontrado"** (amarillo al final) → el `.exe` y el ZIP portable
-  **sí se generaron**; solo faltó el instalador. Instala Inno Setup 6 (ver abajo), o
-  abre `Imago.iss` con doble clic y pulsa el botón **Build (▶)**.
+  **sí se generaron** y se verifican; el instalador se omite y cualquier copia
+  anterior de `ImagoSetup.exe` **no cuenta como actualizada**. Instala Inno Setup 6
+  (ver abajo), o abre `Imago.iss` con doble clic y pulsa el botón **Build (▶)**.
 - **Windows dice "Editor desconocido"** al instalar/abrir → es normal (el `.exe` no
   está firmado): *Más información → Ejecutar de todos modos*.
 - **El antivirus marca el `.exe`** → es un falso positivo típico de los programas
@@ -144,4 +191,5 @@ Y **Inno Setup 6** se descarga e instala desde: https://jrsoftware.org/isdl.php
 2. Cierra Imago.
 3. Terminal en la carpeta del proyecto.
 4. `powershell -ExecutionPolicy Bypass -File .\empaquetar.ps1`
-5. Recoge `installer\ImagoSetup.exe` y `Imago-1.0-portable.zip`.
+5. Confirma que la verificación termina en «Distribución apta para publicar» y
+   recoge `installer\ImagoSetup.exe` y `Imago-1.0-portable.zip`.

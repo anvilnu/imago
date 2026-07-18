@@ -441,10 +441,23 @@ prioridades críticas, porque afectan a la integridad del documento.
   por 4 regresiones nuevas; suite completa de 134 pruebas superadas en Windows
   11 (3 pruebas POSIX omitidas automáticamente).
 
-- [ ] **Higiene del repositorio y de las distribuciones.** Confirmar que
+- [x] **Higiene del repositorio y de las distribuciones.** Confirmar que
   `.venv`, `build`, `dist`, ZIP portables, `__pycache__` y logs no estén
   versionados; añadir/actualizar `.gitignore` y documentar qué artefactos se
   generan. Revisar el tamaño de cada distribución antes de publicar.
+  Completado el 18-07-2026. La auditoría confirma que entorno, construcciones,
+  instalador, ZIP, cachés y logs están ignorados y nunca entraron en el índice;
+  el repositorio Git empaquetado ocupa solo 1,54 MiB. `.gitignore` cubre además
+  cachés de pruebas, tipado, cobertura, paquetes Python y restos de editores.
+  `verificar_distribucion.py` mide carpeta, instalador y portable, calcula sus
+  SHA-256 y rechaza datos de usuario, logs, bytecode, marcadores mal ubicados,
+  rutas inseguras, ZIP sin ejecutable o que no coincida archivo por archivo con
+  `dist`, y varias versiones ambiguas. `empaquetar.ps1` lo ejecuta como quinta
+  fase y `COMO_ACTUALIZAR.md` documenta cada salida regenerable.
+  Medición Windows de la distribución 1.0 existente: 494,85 MiB desplegada,
+  191,74 MiB en ZIP y 134,39 MiB como instalador; no se reconstruyeron binarios
+  en esta tarea. Cubierto por 3 regresiones nuevas; suite completa de 137
+  pruebas superadas en Windows 11 (3 pruebas POSIX omitidas automáticamente).
 
 ### Mejoras de producto sugeridas por la auditoría
 

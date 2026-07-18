@@ -325,6 +325,9 @@ recursos_rc.py          Recursos EMBEBIDOS compilados (generado por
 generar_recursos.py     Regenera recursos.qrc + recursos_rc.py desde icons/.
                         EJECÚTALO cada vez que añadas/quites/cambies un icono:
                         `python generar_recursos.py`.
+verificar_distribucion.py  Auditoría de solo lectura previa a publicar: mide
+                        carpeta desplegada, instalador y ZIP, calcula hashes y
+                        rechaza datos locales, cachés, logs o marcadores erróneos.
 imago_crash.log         Registro de excepciones no capturadas (hook de main.py).
 tests/                  Pruebas de regresión headless (unittest):
                         `python -m unittest discover -v tests`. Cada arreglo
