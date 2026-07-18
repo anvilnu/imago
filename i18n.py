@@ -784,6 +784,7 @@ _STRINGS = {
     "pref.save":                 {"es": "Guardado de imágenes", "en": "Image saving", "fr": "Enregistrement des images"},
     "pref.save.keep_exif":       {"es": "Conservar metadatos EXIF al guardar JPEG (fecha, cámara, GPS…)", "en": "Keep EXIF metadata when saving JPEG (date, camera, GPS…)", "fr": "Conserver les métadonnées EXIF à l'enregistrement JPEG (date, appareil, GPS…)"},
     "pref.save.keep_gps":        {"es": "Incluir la ubicación GPS (privacidad)", "en": "Include GPS location (privacy)", "fr": "Inclure la localisation GPS (confidentialité)"},
+    "pref.save.keep_gps.note":   {"es": "Al desmarcarla, Imago sobrescribe físicamente los datos GPS del EXIF antes de guardar. Si el bloque no puede limpiarse con seguridad, no conserva ningún EXIF.", "en": "When unchecked, Imago physically overwrites the EXIF GPS data before saving. If the block cannot be cleaned safely, no EXIF is kept.", "fr": "Si cette option est décochée, Imago écrase physiquement les données GPS EXIF avant l'enregistrement. Si le bloc ne peut pas être nettoyé de façon sûre, aucune donnée EXIF n'est conservée."},
     "pref.nav.ai":               {"es": "IA", "en": "AI", "fr": "IA"},
     "pref.nav.save":             {"es": "Guardado", "en": "Saving", "fr": "Enregistrement"},
     "pref.general.mini_color":   {"es": "Mostrar mini panel de color en herramientas al cerrar panel de color", "en": "Show mini color panel in tools when the color panel is closed", "fr": "Afficher le mini panneau de couleur dans les outils quand le panneau de couleur est fermé"},

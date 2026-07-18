@@ -17,9 +17,10 @@ Dos retoques in situ (mismo número de bytes, offsets intactos):
 - Orientación (tag 0x0112 de IFD0) -> 1: cargar_imagen_orientada() ya aplicó la
   rotación a los píxeles al abrir; dejar la orientación original haría que los
   visores volvieran a girar la foto.
-- Si no se quiere conservar el GPS, se neutraliza el puntero al IFD de GPS (tag
-  0x8825 de IFD0) convirtiéndolo en un tag "Padding" inofensivo: los datos de
-  ubicación quedan huérfanos (sin referencia) y ningún lector los muestra.
+- Si no se quiere conservar el GPS, se sobrescriben con ceros la tabla GPS y
+  todos sus valores externos antes de neutralizar el puntero 0x8825. Si el
+  bloque no se puede validar por completo, se descarta todo el EXIF: la
+  privacidad prevalece sobre conservar metadatos posiblemente dañados.
 
 El EXIF se coloca justo tras el marcador SOI (antes del APP0/JFIF que escribe
 Qt), que es como lo ponen las cámaras. Pillow sólo se usa para LEER el bloque
@@ -29,6 +30,23 @@ from __future__ import annotations
 
 import struct
 from atomic_io import escribir_atomico
+
+
+_TIFF_TYPE_SIZES = {
+    1: 1,   # BYTE
+    2: 1,   # ASCII
+    3: 2,   # SHORT
+    4: 4,   # LONG
+    5: 8,   # RATIONAL
+    6: 1,   # SBYTE
+    7: 1,   # UNDEFINED
+    8: 2,   # SSHORT
+    9: 4,   # SLONG
+    10: 8,  # SRATIONAL
+    11: 4,  # FLOAT
+    12: 8,  # DOUBLE
+}
+_GPS_WIPED_MARKER = b"IGPS"
 
 
 def leer_exif(ruta):
@@ -42,47 +60,145 @@ def leer_exif(ruta):
         return None
 
 
+def _ifd_bounds(buf, tiff_start, fmt, offset):
+    """Valida un IFD TIFF y devuelve (inicio, entradas, fin), o None."""
+    if offset < 8:
+        return None
+    start = tiff_start + offset
+    if start < tiff_start or start + 2 > len(buf):
+        return None
+    count = struct.unpack_from(fmt + "H", buf, start)[0]
+    entries_start = start + 2
+    end = entries_start + count * 12 + 4
+    if end > len(buf):
+        return None
+    return start, entries_start, end
+
+
+def _gps_ranges(buf, tiff_start, fmt, gps_offset, protected):
+    """Obtiene todos los rangos que pertenecen al GPS IFD, ya validados.
+
+    Incluye la tabla completa y cada valor que no cabe inline. Los rangos no
+    pueden invadir la estructura de IFD0, pues borrarlos corrompería el TIFF.
+    """
+    bounds = _ifd_bounds(buf, tiff_start, fmt, gps_offset)
+    if bounds is None:
+        return None
+    start, entries_start, end = bounds
+    if start < protected[1] and end > protected[0]:
+        return None
+    if struct.unpack_from(fmt + "I", buf, end - 4)[0] != 0:
+        return None
+    ranges = [(start, end)]
+    count = (end - entries_start - 4) // 12
+    for index in range(count):
+        entry = entries_start + index * 12
+        tag = struct.unpack_from(fmt + "H", buf, entry)[0]
+        if tag > 0x001F:
+            return None
+        value_type = struct.unpack_from(fmt + "H", buf, entry + 2)[0]
+        value_count = struct.unpack_from(fmt + "I", buf, entry + 4)[0]
+        unit_size = _TIFF_TYPE_SIZES.get(value_type)
+        if unit_size is None:
+            return None
+        value_size = value_count * unit_size
+        if value_size <= 4:
+            continue
+        value_offset = struct.unpack_from(fmt + "I", buf, entry + 8)[0]
+        value_start = tiff_start + value_offset
+        value_end = value_start + value_size
+        if value_offset < 8 or value_start < tiff_start or value_end > len(buf):
+            return None
+        if value_start < protected[1] and value_end > protected[0]:
+            return None
+        ranges.append((value_start, value_end))
+    return ranges
+
+
+def _wipe_gps(buf, tiff_start, fmt, gps_entry, gps_offset, ifd0_range):
+    """Sobrescribe físicamente GPS y convierte su puntero en Padding."""
+    ranges = _gps_ranges(buf, tiff_start, fmt, gps_offset, ifd0_range)
+    if ranges is None:
+        return False
+    for start, end in ranges:
+        buf[start:end] = b"\x00" * (end - start)
+    struct.pack_into(fmt + "H", buf, gps_entry, 0xEA1C)  # Padding
+    struct.pack_into(fmt + "H", buf, gps_entry + 2, 1)   # BYTE
+    struct.pack_into(fmt + "I", buf, gps_entry + 4, 4)
+    buf[gps_entry + 8:gps_entry + 12] = _GPS_WIPED_MARKER
+    return True
+
+
 def _patch_exif_raw(raw, quitar_gps=False):
-    """Devuelve los bytes EXIF crudos ('Exif\\x00\\x00' + TIFF) con la Orientación
-    forzada a 1 y, si quitar_gps, el puntero al IFD de GPS neutralizado. Todo IN
-    SITU (mismo tamaño): conserva miniatura, maker notes y offsets intactos, y
-    mantiene un TIFF válido para lectores estrictos. None si no reconoce la
-    cabecera EXIF/TIFF."""
+    """Normaliza orientación y, opcionalmente, borra físicamente el GPS.
+
+    Conserva el tamaño, la miniatura, las maker notes y todos los offsets. Si
+    se pide quitar GPS pero no se puede validar y sobrescribir todo su IFD,
+    devuelve None para que el guardado omita el EXIF completo.
+    """
     try:
         if not raw or raw[:6] != b"Exif\x00\x00":
             return None
         buf = bytearray(raw)
-        t = 6  # inicio del bloque TIFF dentro de buf
-        orden = bytes(buf[t:t + 2])
-        if orden == b"II":
+        tiff_start = 6
+        if len(buf) < tiff_start + 8:
+            return None
+        byte_order = bytes(buf[tiff_start:tiff_start + 2])
+        if byte_order == b"II":
             fmt = "<"
-        elif orden == b"MM":
+        elif byte_order == b"MM":
             fmt = ">"
         else:
             return None
-        ifd_off = struct.unpack_from(fmt + "I", buf, t + 4)[0]
-        p = t + ifd_off
-        if p + 2 > len(buf):
+        if struct.unpack_from(fmt + "H", buf, tiff_start + 2)[0] != 42:
             return None
-        n = struct.unpack_from(fmt + "H", buf, p)[0]
-        p += 2
-        # Sólo IFD0: tanto Orientation (0x0112) como el puntero GPS (0x8825) viven ahí.
-        for _ in range(n):
-            if p + 12 > len(buf):
-                break
-            tag = struct.unpack_from(fmt + "H", buf, p)[0]
-            if tag == 0x0112:  # Orientation = 1 (los píxeles ya vienen derechos)
-                struct.pack_into(fmt + "H", buf, p + 8, 1)
-            elif tag == 0x8825 and quitar_gps:
-                # La entrada pasa a ser un tag "Padding" (0xEA1C, BYTE, valor 0):
-                # deja de apuntar al IFD de GPS y ningún lector muestra ubicación.
-                struct.pack_into(fmt + "H", buf, p, 0xEA1C)   # tag
-                struct.pack_into(fmt + "H", buf, p + 2, 1)    # tipo = BYTE
-                struct.pack_into(fmt + "I", buf, p + 4, 4)    # count = 4
-                struct.pack_into(fmt + "I", buf, p + 8, 0)    # valor inline = 0
-            p += 12
+        ifd0_offset = struct.unpack_from(fmt + "I", buf, tiff_start + 4)[0]
+        bounds = _ifd_bounds(buf, tiff_start, fmt, ifd0_offset)
+        if bounds is None:
+            return None
+        ifd0_start, entries_start, ifd0_end = bounds
+        count = (ifd0_end - entries_start - 4) // 12
+        gps_entries = []
+        legacy_gps_padding = False
+        for index in range(count):
+            entry = entries_start + index * 12
+            tag = struct.unpack_from(fmt + "H", buf, entry)[0]
+            if tag == 0x0112:
+                value_type = struct.unpack_from(fmt + "H", buf, entry + 2)[0]
+                value_count = struct.unpack_from(fmt + "I", buf, entry + 4)[0]
+                if value_type == 3 and value_count == 1:
+                    struct.pack_into(fmt + "H", buf, entry + 8, 1)
+            elif tag == 0x8825:
+                gps_entries.append(entry)
+            elif tag == 0xEA1C:
+                is_imago_padding = (
+                    struct.unpack_from(fmt + "H", buf, entry + 2)[0] == 1
+                    and struct.unpack_from(fmt + "I", buf, entry + 4)[0] == 4)
+                if is_imago_padding:
+                    marker = bytes(buf[entry + 8:entry + 12])
+                    legacy_gps_padding = legacy_gps_padding or marker == b"\x00" * 4
+
+        if quitar_gps:
+            if gps_entries:
+                if len(gps_entries) != 1:
+                    return None
+                gps_entry = gps_entries[0]
+                value_type = struct.unpack_from(fmt + "H", buf, gps_entry + 2)[0]
+                value_count = struct.unpack_from(fmt + "I", buf, gps_entry + 4)[0]
+                if value_type != 4 or value_count != 1:
+                    return None
+                gps_offset = struct.unpack_from(fmt + "I", buf, gps_entry + 8)[0]
+                if not _wipe_gps(
+                        buf, tiff_start, fmt, gps_entry, gps_offset,
+                        (ifd0_start, ifd0_end)):
+                    return None
+            elif legacy_gps_padding:
+                # Versiones anteriores de Imago borraban el offset y dejaban
+                # los bytes GPS huérfanos. Ya no es posible localizarlos con
+                # seguridad: se omite todo el EXIF para no volver a copiarlos.
+                return None
         return bytes(buf)
-    except Exception:
+    except (IndexError, OverflowError, struct.error, ValueError):
         return None
 
 

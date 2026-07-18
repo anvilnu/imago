@@ -165,7 +165,9 @@ exif_utils.py           Conserva los metadatos EXIF (fecha, cámara, GPS,
                         EXIF de origen CRUDO como segmento APP1 tras el SOI, sin
                         recomprimir. Se parchea IN SITU (mismo tamaño): la
                         Orientación a 1 (los píxeles ya se guardan derechos) y, si
-                        no se quiere GPS, se neutraliza el puntero 0x8825. NO se
+                        no se quiere GPS, se sobrescriben su IFD y valores antes
+                        de neutralizar el puntero 0x8825; si el saneado no es
+                        seguro se omite todo el EXIF. NO se
                         re-serializa con Pillow (su TIFF lo rechaza exiv2/KDE y
                         pierde la miniatura); Pillow sólo LEE el bloque original.
                         El lienzo lleva canvas.source_exif del abrir.

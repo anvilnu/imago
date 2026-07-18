@@ -315,6 +315,17 @@ class PreferencesDialog(FramelessDialog):
         row_gps.addWidget(self.keep_gps_check)
         row_gps.addStretch()
         layout.addLayout(row_gps)
+        row_gps_note = QHBoxLayout()
+        row_gps_note.addSpacing(44)
+        self.keep_gps_note = self._note(
+            t("pref.save.keep_gps.note",
+              default="Al desmarcarla, Imago sobrescribe físicamente los datos "
+                      "GPS del EXIF antes de guardar. Si el bloque no puede "
+                      "limpiarse con seguridad, no conserva ningún EXIF."))
+        self.keep_gps_note.setEnabled(self.keep_exif_check.isChecked())
+        self.keep_exif_check.toggled.connect(self.keep_gps_note.setEnabled)
+        row_gps_note.addWidget(self.keep_gps_note, 1)
+        layout.addLayout(row_gps_note)
         layout.addStretch()
         self.stack.addWidget(page)
 

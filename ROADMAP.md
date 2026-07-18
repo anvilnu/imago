@@ -425,11 +425,21 @@ prioridades críticas, porque afectan a la integridad del documento.
   Cubierto por 5 regresiones nuevas y la suite completa de 130 pruebas superadas
   en Windows 11 (3 pruebas POSIX omitidas automáticamente).
 
-- [ ] **Aclarar o reforzar la eliminación de GPS EXIF.** Hoy se neutraliza el
+- [x] **Aclarar o reforzar la eliminación de GPS EXIF.** Hoy se neutraliza el
   puntero GPS, por lo que lectores normales no muestran las coordenadas, pero
   los bytes originales quedan huérfanos y podrían recuperarse de forma
   forense. Si la opción se presenta como privacidad/anonimización, ofrecer
   eliminación física real o explicar con precisión su alcance.
+  Completado el 18-07-2026. Al excluir la ubicación, `exif_utils.py` valida el
+  puntero 0x8825, la tabla GPS y todos sus valores externos en ambos órdenes
+  TIFF; después sobrescribe físicamente esos rangos antes de convertir el
+  puntero en Padding, manteniendo intactos el tamaño del bloque, la miniatura,
+  las maker notes y los demás metadatos. Un bloque malformado, una extensión
+  GPS desconocida o el marcador del saneado antiguo hacen que Imago omita todo
+  el EXIF: así no conserva ni vuelve a copiar bytes cuya limpieza no pueda
+  garantizar. Preferencias explica este comportamiento en ES/EN/FR. Cubierto
+  por 4 regresiones nuevas; suite completa de 134 pruebas superadas en Windows
+  11 (3 pruebas POSIX omitidas automáticamente).
 
 - [ ] **Higiene del repositorio y de las distribuciones.** Confirmar que
   `.venv`, `build`, `dist`, ZIP portables, `__pycache__` y logs no estén
