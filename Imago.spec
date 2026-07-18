@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 #
-# PyInstaller: receta para construir Imago.exe (one-folder, sin consola).
+# PyInstaller: receta multiplataforma para construir Imago (one-folder, sin consola).
 # Construir con:  python -m PyInstaller --noconfirm Imago.spec
-# Salida:         dist\Imago\Imago.exe  (+ carpeta _internal con las dependencias)
+# Salida:         dist/Imago/Imago[.exe] (+ carpeta _internal con dependencias)
 #
 # Particularidades de este proyecto que resuelve la receta:
 #  - Los iconos viajan EMBEBIDOS en recursos_rc.py (generado por
@@ -71,7 +71,9 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    icon='icons/imago.ico',
+    # El icono del ejecutable solo se incrusta en Windows. En Linux lo aportan
+    # el .desktop, AppImage y Flatpak; no se genera ni se necesita el .ico.
+    icon='icons/imago.ico' if os.name == 'nt' else None,
 )
 
 coll = COLLECT(

@@ -4,7 +4,16 @@
 #   .\.venv\Scripts\python.exe -m pip install pyinstaller
 #   e instalar Inno Setup 6 (https://jrsoftware.org/isdl.php)
 
-$py = ".\.venv\Scripts\python.exe"
+param(
+    # GitHub Actions aporta su propio Python; en uso local se conserva .venv.
+    [string]$Python = ""
+)
+
+$py = if ($Python) { $Python } else { ".\.venv\Scripts\python.exe" }
+if (-not (Get-Command $py -ErrorAction SilentlyContinue)) {
+    Write-Host "Python no encontrado: $py" -ForegroundColor Red
+    exit 1
+}
 $versionSalida = & $py -c "from imago_version import APP_VERSION; print(APP_VERSION)"
 if ($LASTEXITCODE -ne 0) { Write-Host "No se pudo leer la versión de imago_version.py." -ForegroundColor Red; exit 1 }
 $version = "$versionSalida".Trim()

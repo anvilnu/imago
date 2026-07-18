@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.anvilnu.imago</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Imago</name>
+  <summary>Editor de imágenes con capas e IA local</summary>
+  <summary xml:lang="en">Image editor with layers and local AI</summary>
+  <summary xml:lang="fr">Éditeur d’images avec calques et IA locale</summary>
+  <description>
+    <p>Imago es un editor de imágenes de escritorio con capas, selecciones, herramientas de dibujo, efectos y funciones de IA que se ejecutan localmente.</p>
+    <p xml:lang="en">Imago is a desktop image editor with layers, selections, drawing tools, effects and locally executed AI features.</p>
+    <p xml:lang="fr">Imago est un éditeur d’images de bureau avec des calques, des sélections, des outils de dessin, des effets et des fonctions d’IA exécutées localement.</p>
+  </description>
+  <launchable type="desktop-id">io.github.anvilnu.imago.desktop</launchable>
+  <provides>
+    <binary>imago</binary>
+  </provides>
+  <developer id="io.github.anvilnu">
+    <name>AVNSoft</name>
+  </developer>
+  <releases>
+    <release version="@APP_VERSION@" />
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>

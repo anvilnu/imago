@@ -28,6 +28,7 @@ __pycache__/
 /build/
 /dist/
 /installer/
+/salida/
 /Imago-*-portable.zip
 /icons/imago.ico
 

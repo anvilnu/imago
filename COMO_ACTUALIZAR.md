@@ -1,11 +1,80 @@
-# 🔄 Cómo actualizar Imago (instalador y portable)
+# 🔄 Cómo generar y publicar las distribuciones de Imago
 
-Guía **paso a paso, sin prisa**. Úsala cada vez que cambies el código de Imago y
-quieras volver a generar el **instalador** (`ImagoSetup.exe`) y la **versión
-portable** (`Imago-<versión>-portable.zip`).
+Guía **paso a paso, sin prisa**. Hay dos caminos compatibles:
+
+- **GitHub Actions (recomendado):** genera automáticamente el instalador y el
+  portable de Windows, más AppImage y Flatpak para Linux. Se puede lanzar desde
+  cualquier sistema operativo porque cada paquete se construye en una máquina
+  temporal del sistema correspondiente.
+- **Construcción local en Windows:** `empaquetar.ps1` mantiene exactamente el
+  proceso de siempre para regenerar `ImagoSetup.exe` y el ZIP portable.
+
+---
+
+## ☁️ Las cuatro distribuciones con GitHub Actions
+
+El workflow `.github/workflows/distribucion.yml` ejecuta en paralelo una máquina
+Windows y otra Ubuntu. Ambos trabajos instalan las dependencias desde cero,
+ejecutan toda la suite de pruebas y construyen estos archivos para la versión de
+`imago_version.py`:
+
+| Sistema | Paquete |
+|---|---|
+| Windows | `Imago-<versión>-Setup.exe` |
+| Windows | `Imago-<versión>-portable.zip` |
+| Linux x86_64 | `Imago-<versión>-x86_64.AppImage` |
+| Linux x86_64 | `Imago-<versión>-x86_64.flatpak` |
+
+También calcula un archivo `.sha256` para comprobar cada descarga. AppImage y
+Flatpak reutilizan una única compilación Linux de PyInstaller, para ahorrar
+tiempo de ejecución.
+
+### Probar que el empaquetado sigue funcionando
+
+En GitHub, abre **Actions ▸ Construir distribuciones ▸ Run workflow**. También se
+puede dejar sin ejecutar hasta que Imago esté listo: subir cambios normales a
+`main` no inicia ninguna construcción. Una ejecución manual de prueba construye
+y valida todo, pero no conserva los paquetes, así que no ocupa la cuota reducida
+de almacenamiento de artefactos.
+
+### Crear los paquetes descargables de una versión
+
+1. Cambia únicamente `APP_VERSION` en `imago_version.py`, por ejemplo a `1.1`, y
+   sube ese cambio.
+2. Crea y sube una etiqueta con una `v` delante y el mismo número exacto:
+
+   ```powershell
+   git tag v1.1
+   git push origin v1.1
+   ```
+
+3. GitHub volverá a construir los cuatro paquetes y creará un **borrador** en
+   **Releases**. No se publica automáticamente: primero puedes descargarlo,
+   probarlo y, cuando estés conforme, pulsar **Publish release**.
+
+Si la etiqueta no coincide con `APP_VERSION` —por ejemplo, `v1.2` con el código
+todavía en `1.1`— el proceso se detiene para no publicar paquetes mal nombrados.
+Si se repite una ejecución, los archivos del mismo borrador se actualizan.
+
+### Coste y almacenamiento
+
+En repositorios públicos, los ejecutores estándar de GitHub Actions son
+gratuitos. En un repositorio privado con GitHub Free se incluyen actualmente
+2.000 minutos al mes y 500 MB de almacenamiento para artefactos. Este workflow
+no guarda los cuatro paquetes como artefactos temporales: solo los añade a un
+borrador de Release cuando existe una etiqueta de versión. GitHub documenta las
+cuotas actuales en https://docs.github.com/en/billing/concepts/product-billing/github-actions.
+
+La herramienta oficial `appimagetool` se descarga con un SHA-256 fijado en el
+workflow. Si el proyecto AppImage reemplaza su compilación continua, la descarga
+fallará de forma segura hasta revisar y actualizar conscientemente ese hash.
+
+---
+
+## 🪟 Construcción local en Windows
 
 > **La idea en una frase:** ejecutas **un solo script** (`empaquetar.ps1`) y él te
-> regenera TODO: el `.exe`, el instalador y el ZIP portable. Nada más.
+> regenera el `.exe`, el instalador y el ZIP portable. Nada más.
 
 ---
 
@@ -149,6 +218,35 @@ Admite versiones numéricas como `1.1`, `1.2.1` o `2.0.0.1`. Después ejecuta
 `empaquetar.ps1` como siempre. El mismo valor aparecerá en Ayuda ▸ Acerca de,
 en los metadatos del instalador y en el nombre `Imago-1.1-portable.zip`. Ya no
 hay que editar `help_dialogs.py`, `Imago.iss` ni `empaquetar.ps1`.
+
+---
+
+## 🐧 Usar los paquetes de Linux
+
+La AppImage se ejecuta directamente después de darle permiso:
+
+```bash
+chmod +x Imago-1.1-x86_64.AppImage
+./Imago-1.1-x86_64.AppImage
+```
+
+El Flatpak se instala desde su archivo y después aparece en el menú de
+aplicaciones:
+
+```bash
+flatpak install --user ./Imago-1.1-x86_64.flatpak
+flatpak run io.github.anvilnu.imago
+```
+
+Ninguno de los dos activa el modo portable de Windows: ajustes, recuperaciones
+y modelos de IA se guardan en las rutas de datos estándar de Linux. El Flatpak
+usa Wayland nativo, permite el fallback X11, impresión, aceleración gráfica y
+red para descargar los modelos; la elección de archivos se realiza mediante el
+portal del escritorio.
+
+La receta local equivalente es `empaquetar_linux.sh`, pero normalmente no hace
+falta ejecutarla: GitHub instala por sí mismo PyInstaller, Flatpak Builder, el
+runtime Freedesktop 25.08 y `appimagetool` en su máquina Ubuntu temporal.
 
 ---
 
