@@ -1,0 +1,77 @@
+# Entorno y dependencias locales de Python
+/.venv/
+/venv/
+/env/
+
+# Cachés y resultados de herramientas Python
+__pycache__/
+*.py[cod]
+*$py.class
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.tox/
+/.nox/
+/.hypothesis/
+/.pytype/
+/.pyre/
+/.cache/
+/.coverage
+/.coverage.*
+/coverage.xml
+/htmlcov/
+*.egg-info/
+/pip-wheel-metadata/
+/wheelhouse/
+
+# Compilación y distribución
+/build/
+/dist/
+/installer/
+/salida/
+/Imago-*-portable.zip
+/icons/imago.ico
+
+# Datos generados durante la ejecución
+*.log
+/datos/
+/portable.txt
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*~
+
+# Configuración personal del editor y del sistema
+/.vscode/
+/.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Configuración local de asistentes
+/.agents/
+/.codex/
+
+# Archivos de ayuda personal y de empaquetado: NO forman parte del código
+# público de Imago. Se conservan en local (siguen en disco), pero no se
+# publican en el repositorio.
+/AGENTS.md
+/CLAUDE.md
+/COMO_ACTUALIZAR.md
+/ROADMAP.md
+/Imago.iss
+/Imago.spec
+/empaquetar.ps1
+/empaquetar_linux.sh
+/verificar_distribucion.py
+/packaging/
+/benchmarks/
+# Compañeros de los anteriores (CI de empaquetado y sus tests): dependen de los
+# scripts ocultos, así que tampoco se publican.
+/.github/workflows/distribucion.yml
+/tests/test_verificar_distribucion.py
+/tests/test_banco_rendimiento.py
