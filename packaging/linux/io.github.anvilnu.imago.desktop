@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=Imago
+GenericName=Editor de imágenes
+GenericName[en]=Image editor
+GenericName[fr]=Éditeur d’images
+Comment=Edita imágenes, capas y selecciones con herramientas avanzadas e IA local
+Comment[en]=Edit images, layers and selections with advanced tools and local AI
+Comment[fr]=Modifiez des images, des calques et des sélections avec des outils avancés et une IA locale
+Exec=imago %F
+Icon=io.github.anvilnu.imago
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+MimeType=image/png;image/jpeg;image/webp;image/bmp;image/gif;image/tiff;image/svg+xml;image/avif;image/heic;image/jxl;image/vnd.adobe.photoshop;
+StartupWMClass=Imago
+Keywords=imagen;foto;capas;dibujo;editor;
+Keywords[en]=image;photo;layers;drawing;editor;
+Keywords[fr]=image;photo;calques;dessin;éditeur;

@@ -56,22 +56,12 @@ Desktop.ini
 /.agents/
 /.codex/
 
-# Archivos de ayuda personal y de empaquetado: NO forman parte del código
-# público de Imago. Se conservan en local (siguen en disco), pero no se
-# publican en el repositorio.
+# Notas de ayuda personal y de desarrollo: NO son código correspondiente GPL
+# (no intervienen en construir ni ejecutar Imago). Se conservan en local (siguen
+# en disco), pero no se publican en el repositorio.
 /AGENTS.md
 /CLAUDE.md
 /COMO_ACTUALIZAR.md
 /ROADMAP.md
-/Imago.iss
-/Imago.spec
-/empaquetar.ps1
-/empaquetar_linux.sh
-/verificar_distribucion.py
-/packaging/
 /benchmarks/
-# Compañeros de los anteriores (CI de empaquetado y sus tests): dependen de los
-# scripts ocultos, así que tampoco se publican.
-/.github/workflows/distribucion.yml
-/tests/test_verificar_distribucion.py
 /tests/test_banco_rendimiento.py

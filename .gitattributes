@@ -1,0 +1,9 @@
+# Finales de línea deterministas para el empaquetado. Sin esto, con
+# core.autocrlf un clon en Linux recibiría estos archivos en CRLF y fallarían:
+# bash y AppRun no arrancan, y los parsers de .desktop/.metainfo/.yml se rompen.
+# Los .py, .ps1 y .iss conservan su almacenamiento actual (no se tocan aquí).
+*.sh                            text eol=lf
+*.yml                           text eol=lf
+packaging/linux/AppRun          text eol=lf
+packaging/linux/*.desktop       text eol=lf
+packaging/linux/*.metainfo.xml  text eol=lf

@@ -1,0 +1,257 @@
+name: Construir distribuciones
+
+on:
+  workflow_dispatch:
+    inputs:
+      publicar_release:
+        description: Crear o actualizar el borrador de Release
+        required: true
+        default: false
+        type: boolean
+      etiqueta:
+        description: Etiqueta ya subida, por ejemplo v1.1 (solo para Release)
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: distribucion-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.14'
+  APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+  APPIMAGETOOL_SHA256: a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0
+
+jobs:
+  preparar:
+    name: Comprobar versión y preparar Release
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publicar: ${{ steps.version.outputs.publicar }}
+      etiqueta: ${{ steps.version.outputs.etiqueta }}
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.publicar_release && inputs.etiqueta || github.ref }}
+
+      - name: Comprobar versión
+        id: version
+        env:
+          SOLICITAR_PUBLICACION: ${{ inputs.publicar_release }}
+          ETIQUETA_SOLICITADA: ${{ inputs.etiqueta }}
+        shell: bash
+        run: |
+          VERSION="$(python3 -c 'from imago_version import APP_VERSION; print(APP_VERSION)')"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+){0,2}$ ]]
+          PUBLICAR="${SOLICITAR_PUBLICACION:-false}"
+          ETIQUETA="$ETIQUETA_SOLICITADA"
+          if [[ "$PUBLICAR" == "true" ]]; then
+            if [[ -z "$ETIQUETA" ]]; then
+              echo "Indica la etiqueta que debe recibir los paquetes." >&2
+              exit 1
+            fi
+            if [[ "$ETIQUETA" != "v$VERSION" ]]; then
+              echo "La etiqueta $ETIQUETA no coincide con APP_VERSION=$VERSION." >&2
+              exit 1
+            fi
+          elif [[ -n "$ETIQUETA" ]]; then
+            echo "La etiqueta solo debe indicarse al crear un borrador de Release." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publicar=$PUBLICAR" >> "$GITHUB_OUTPUT"
+          echo "etiqueta=$ETIQUETA" >> "$GITHUB_OUTPUT"
+
+      - name: Crear borrador de Release
+        if: steps.version.outputs.publicar == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ETIQUETA: ${{ steps.version.outputs.etiqueta }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          if ! gh release view "$ETIQUETA" >/dev/null 2>&1; then
+            gh release create "$ETIQUETA" --verify-tag --draft \
+              --title "Imago $VERSION" \
+              --notes "Distribuciones automáticas de Imago $VERSION. Borrador pendiente de pruebas y publicación manual."
+          fi
+
+  windows:
+    name: Windows · instalador y portable
+    needs: preparar
+    runs-on: windows-2022
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.publicar_release && inputs.etiqueta || github.ref }}
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Instalar dependencias
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Ejecutar pruebas
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          python -m unittest discover -v tests
+
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Construir paquetes de Windows
+        shell: pwsh
+        run: .\empaquetar.ps1 -Python (Get-Command python).Source
+
+      - name: Nombrar y calcular hashes
+        id: paquetes
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+        shell: pwsh
+        run: |
+          $instalador = "Imago-$env:VERSION-Setup.exe"
+          $portable = "Imago-$env:VERSION-portable.zip"
+          Copy-Item -LiteralPath 'installer\ImagoSetup.exe' -Destination $instalador
+          foreach ($archivo in @($instalador, $portable)) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivo).Hash.ToLowerInvariant()
+            "$hash  $archivo" | Set-Content -LiteralPath "$archivo.sha256" -Encoding ascii
+            $tamano = [math]::Round((Get-Item -LiteralPath $archivo).Length / 1MB, 2)
+            "- $archivo — $tamano MiB — SHA-256: ``$hash``" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
+          "instalador=$instalador" >> $env:GITHUB_OUTPUT
+          "portable=$portable" >> $env:GITHUB_OUTPUT
+
+      - name: Añadir Windows al borrador de Release
+        if: needs.preparar.outputs.publicar == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ETIQUETA: ${{ needs.preparar.outputs.etiqueta }}
+          INSTALADOR: ${{ steps.paquetes.outputs.instalador }}
+          PORTABLE: ${{ steps.paquetes.outputs.portable }}
+        shell: pwsh
+        run: gh release upload $env:ETIQUETA $env:INSTALADOR $env:PORTABLE "$env:INSTALADOR.sha256" "$env:PORTABLE.sha256" --clobber
+
+  linux:
+    name: Linux · AppImage y Flatpak
+    needs: preparar
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.publicar_release && inputs.etiqueta || github.ref }}
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Instalar dependencias de Python
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Ejecutar pruebas
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: bash
+        run: python -m unittest discover -v tests
+
+      - name: Instalar herramientas Linux y runtime Flatpak
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y appstream desktop-file-utils flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+
+      - name: Descargar y verificar appimagetool
+        shell: bash
+        run: |
+          mkdir -p build/herramientas
+          curl --fail --location "$APPIMAGETOOL_URL" --output build/herramientas/appimagetool-x86_64.AppImage
+          echo "$APPIMAGETOOL_SHA256  build/herramientas/appimagetool-x86_64.AppImage" | sha256sum --check
+          chmod +x build/herramientas/appimagetool-x86_64.AppImage
+
+      - name: Construir paquetes de Linux
+        env:
+          APPIMAGETOOL: ${{ github.workspace }}/build/herramientas/appimagetool-x86_64.AppImage
+          PYTHON_BIN: python
+        shell: bash
+        run: ./empaquetar_linux.sh
+
+      - name: Resumir paquetes Linux
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+        shell: bash
+        run: |
+          for archivo in "salida/Imago-$VERSION-x86_64.AppImage" "salida/Imago-$VERSION-x86_64.flatpak"; do
+            tamano="$(du -h "$archivo" | cut -f1)"
+            hash="$(sha256sum "$archivo" | cut -d' ' -f1)"
+            echo "- $(basename "$archivo") — $tamano — SHA-256: \`$hash\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Añadir Linux al borrador de Release
+        if: needs.preparar.outputs.publicar == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ETIQUETA: ${{ needs.preparar.outputs.etiqueta }}
+          VERSION: ${{ needs.preparar.outputs.version }}
+        shell: bash
+        run: |
+          gh release upload "$ETIQUETA" \
+            "salida/Imago-$VERSION-x86_64.AppImage" \
+            "salida/Imago-$VERSION-x86_64.AppImage.sha256" \
+            "salida/Imago-$VERSION-x86_64.flatpak" \
+            "salida/Imago-$VERSION-x86_64.flatpak.sha256" \
+            --clobber
+
+  verificar_release:
+    name: Comprobar el borrador de Release
+    if: needs.preparar.outputs.publicar == 'true'
+    needs:
+      - preparar
+      - windows
+      - linux
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Comprobar los cuatro paquetes y sus hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ETIQUETA: ${{ needs.preparar.outputs.etiqueta }}
+          VERSION: ${{ needs.preparar.outputs.version }}
+        shell: bash
+        run: |
+          gh release view "$ETIQUETA" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' > nombres-release.txt
+          esperados=(
+            "Imago-$VERSION-Setup.exe"
+            "Imago-$VERSION-Setup.exe.sha256"
+            "Imago-$VERSION-portable.zip"
+            "Imago-$VERSION-portable.zip.sha256"
+            "Imago-$VERSION-x86_64.AppImage"
+            "Imago-$VERSION-x86_64.AppImage.sha256"
+            "Imago-$VERSION-x86_64.flatpak"
+            "Imago-$VERSION-x86_64.flatpak.sha256"
+          )
+          for archivo in "${esperados[@]}"; do
+            grep --fixed-strings --line-regexp "$archivo" nombres-release.txt
+          done
+          echo "Los cuatro paquetes y sus SHA-256 están en el borrador de Release." >> "$GITHUB_STEP_SUMMARY"
