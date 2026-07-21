@@ -1,5 +1,7 @@
 # Imago
 
+🌐 **Sitio web y descargas:** <https://anvilnu.github.io/Imago/> · 📦 **Descargas directas:** [Release v1.0](https://github.com/anvilnu/Imago/releases/latest) (instalador y portable de Windows)
+
 **Imago** es un editor de imágenes de escritorio de estilo *Paint.NET*, escrito en
 **Python + PySide6 (Qt 6)**. Combina la potencia de un editor por capas con la
 sencillez de las herramientas clásicas, e incluye un conjunto de funciones de
