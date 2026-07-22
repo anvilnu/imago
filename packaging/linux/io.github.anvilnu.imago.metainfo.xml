@@ -13,6 +13,8 @@
     <p xml:lang="fr">Imago est un éditeur d’images de bureau avec des calques, des sélections, des outils de dessin, des effets et des fonctions d’IA exécutées localement.</p>
   </description>
   <launchable type="desktop-id">io.github.anvilnu.imago.desktop</launchable>
+  <url type="homepage">https://anvilnu.github.io/Imago/</url>
+  <url type="bugtracker">https://github.com/anvilnu/Imago/issues</url>
   <provides>
     <binary>imago</binary>
   </provides>
@@ -20,7 +22,7 @@
     <name>AVNSoft</name>
   </developer>
   <releases>
-    <release version="@APP_VERSION@" />
+    <release version="@APP_VERSION@" date="2026-07-22" />
   </releases>
   <content_rating type="oars-1.1" />
 </component>
