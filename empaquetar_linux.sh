@@ -85,7 +85,7 @@ chmod +x "$APPIMAGE"
 
 echo "== 4/5  Flatpak =="
 rm -rf -- "$BUILD_FLATPAK" "$REPO_FLATPAK"
-flatpak-builder --force-clean --repo="$REPO_FLATPAK" \
+flatpak-builder --force-clean --default-branch=stable --repo="$REPO_FLATPAK" \
     "$BUILD_FLATPAK" packaging/linux/$ID_APP.yml
 flatpak build-bundle --arch=x86_64 \
     --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
