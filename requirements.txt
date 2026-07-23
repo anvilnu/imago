@@ -8,6 +8,12 @@
 #   Arch/CachyOS:  sudo pacman -S xcb-util-cursor
 #   Debian/Ubuntu: sudo apt install libxcb-cursor0
 numpy==2.5.0
+# Paquete de certificados CA (Mozilla). Se usa SOLO en los binarios empaquetados
+# (PyInstaller): main.py fija SSL_CERT_FILE a certifi.where() cuando está congelado,
+# porque el OpenSSL incluido busca la CA en una ruta de la máquina de compilación
+# (Ubuntu: /usr/lib/ssl) que no existe en otras distros ni en el sandbox de Flatpak.
+# Sin esto, la descarga de modelos de IA por HTTPS falla con error de certificado.
+certifi==2026.07.22
 # Motor de IA local. Import PEREZOSO en ai/runner.py: Imago arranca aunque no
 # esté instalado; solo hace falta para EJECUTAR modelos (no para la UI).
 # - Windows: variante DirectML (mismo import "onnxruntime"): añade

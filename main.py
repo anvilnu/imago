@@ -59,6 +59,20 @@ if getattr(sys, "frozen", False) and len(sys.argv) >= 5 and sys.argv[1] == "--ai
 if getattr(sys, "frozen", False):
     os.chdir(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
 
+# 3) Certificados TLS: el OpenSSL que incluye PyInstaller busca la CA en la ruta de
+#    la maquina donde se compilo (Ubuntu: /usr/lib/ssl), que NO existe en otras
+#    distribuciones (Arch, Fedora...) ni en el sandbox de Flatpak; sin ella, la
+#    descarga de modelos de IA por HTTPS falla con error de certificado. Apuntamos
+#    SSL_CERT_FILE al cacert.pem de certifi, que viaja DENTRO del propio paquete, y
+#    asi funciona en cualquier sistema. Con setdefault se respeta una CA propia si
+#    el usuario o el entorno ya la definieron.
+if getattr(sys, "frozen", False):
+    try:
+        import certifi
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    except Exception:
+        pass
+
 # === DIAGNÓSTICO DE CIERRES INESPERADOS ======================================
 # Registra en "imago_crash.log" TODO lo que pueda tumbar o degradar Imago, para que
 # un usuario pueda compartir el archivo si tiene problemas:
