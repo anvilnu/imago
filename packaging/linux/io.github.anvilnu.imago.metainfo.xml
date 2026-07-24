@@ -18,6 +18,44 @@
   <provides>
     <binary>imago</binary>
   </provides>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://anvilnu.github.io/Imago/imagenes_web/general.jpg</image>
+      <caption>Vista general: capas, selección, paneles e historial</caption>
+      <caption xml:lang="en">Overview: layers, selection, panels and history</caption>
+      <caption xml:lang="fr">Vue d’ensemble : calques, sélection, panneaux et historique</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://anvilnu.github.io/Imago/imagenes_web/h_formas.jpg</image>
+      <caption>Herramientas de dibujo y formas</caption>
+      <caption xml:lang="en">Drawing and shape tools</caption>
+      <caption xml:lang="fr">Outils de dessin et de formes</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://anvilnu.github.io/Imago/imagenes_web/h_texto.jpg</image>
+      <caption>Texto editable con estilos</caption>
+      <caption xml:lang="en">Editable text with styles</caption>
+      <caption xml:lang="fr">Texte modifiable avec styles</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://anvilnu.github.io/Imago/imagenes_web/ia_borrar2.jpg</image>
+      <caption>IA local: quitar el fondo</caption>
+      <caption xml:lang="en">Local AI: remove the background</caption>
+      <caption xml:lang="fr">IA locale : supprimer l’arrière-plan</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://anvilnu.github.io/Imago/imagenes_web/ia_colorizar2.jpg</image>
+      <caption>IA local: colorear fotos en blanco y negro</caption>
+      <caption xml:lang="en">Local AI: colorize black-and-white photos</caption>
+      <caption xml:lang="fr">IA locale : coloriser des photos en noir et blanc</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://anvilnu.github.io/Imago/imagenes_web/ia_reemplazar_fondo2.jpg</image>
+      <caption>IA local: reemplazar el fondo</caption>
+      <caption xml:lang="en">Local AI: replace the background</caption>
+      <caption xml:lang="fr">IA locale : remplacer l’arrière-plan</caption>
+    </screenshot>
+  </screenshots>
   <developer id="io.github.anvilnu">
     <name>AVNSoft</name>
   </developer>
