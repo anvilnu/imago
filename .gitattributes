@@ -9,3 +9,6 @@ packaging/linux/*.desktop       text eol=lf
 packaging/linux/*.metainfo.xml  text eol=lf
 packaging/aur/PKGBUILD          text eol=lf
 packaging/aur/.SRCINFO          text eol=lf
+packaging/flathub/*.yaml        text eol=lf
+packaging/flathub/*.json        text eol=lf
+packaging/flathub/requirements.txt  text eol=lf
